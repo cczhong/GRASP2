@@ -56,7 +56,8 @@ class ReducedAlphabet {
     for(auto it = s.begin(); it != s.end(); ++ it) {sc += Convert(*it);}
     return sc;
   }
-  
+  friend class BioAlphabet;
+
  protected:
   // data begin
   enum Alphabet alphabet_in_use_;

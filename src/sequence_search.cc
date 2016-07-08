@@ -2,49 +2,6 @@
 
 using namespace std;
 
-void SequenceSearch::ComputeReducedMap(
-    const int mer_len, BioAlphabet &alpha,
-    ReducedAlphabet &re_alpha, std::vector<std::string> &seqs,
-    std::unordered_map<std::string, std::set<KmerUnitType> > &reduced_map
-) {
-  int i, j;
-  KmerUnitcoder coder(alpha, mer_len);
-  for(i = 0; i < seqs.size(); ++ i) {
-    if(seqs[i].length() < mer_len) continue;
-    KmerUnitType ck;
-    for(j = 0; j <= seqs[i].length() - mer_len; ++ j) {
-      string re_mer = re_alpha.Convert(seqs[i].substr(j, mer_len));
-      if(i == 0)  ck = coder.Encode(seqs[i].substr(0, mer_len).c_str());
-      else ck = coder.RightExt(ck, seqs[i][j + mer_len - 1]);
-      reduced_map[re_mer].insert(ck);
-    }
-  }
-  return;
-}
-
-void SequenceSearch::WriteReducedMap(
-    const std::string &file, const int mer_len, BioAlphabet &alpha,
-    std::unordered_map<std::string, std::set<KmerUnitType> > &reduced_map
-) {
-  ofstream out_file;
-  out_file.open(file, ios::out);
-  if(!out_file.is_open())  {
-    cout << "SequenceSearch::DumpSeedMers: Error in writing indexing file " << file << "; Abort." << endl;
-  }
-  // writing reduced_map
-  KmerUnitcoder coder(alpha, mer_len);
-  for(auto itr = reduced_map.begin(); itr != reduced_map.end(); ++ itr) {
-    out_file << "R:" << itr->first << ":";
-    for(auto itrs = itr->second.begin(); itrs != itr->second.end(); ++ itrs) {
-      string s = coder.Decode(*itrs);
-      out_file << s << ":";
-    }
-    out_file << endl;
-  }
-  out_file.close();
-  return;
-}
-
 void SequenceSearch::IndexReducedMap(
     const int mer_len, BioAlphabet &alpha,
     ReducedAlphabet &re_alpha, std::vector<std::string> &seqs,
@@ -161,38 +118,6 @@ void SequenceSearch::WriteSeedMap(
   return;
 }
 
-void SequenceSearch::ComputeKmerFilter(
-    const int mer_len, BioAlphabet &alpha, std::vector<std::string> &seqs,
-    std::vector<std::string> &all_filters  
-) {
-  for(auto it = seqs.begin(); it != seqs.end(); ++ it) {
-    KmerFiltering kmer_filter(mer_len);
-    kmer_filter.KmerBloomFilter(alpha, *it);
-    vector<string> ft_str;
-    kmer_filter.GenFilterString(ft_str);
-    for(auto itf = ft_str.begin(); itf != ft_str.end(); ++ itf) {
-      all_filters.push_back(*itf);
-    }
-  }
-  return;
-}
-
-void SequenceSearch::WriteKmerFilter(
-    const std::string &file, std::vector<std::string> &all_filters
-) {
-  ofstream out_file;
-  out_file.open(file, ios::out);
-  // writing the kmer-readID associations
-  char c;
-  for(auto it = all_filters.begin(); it != all_filters.end(); ++ it) {
-    for(int i = 0; i < it->length(); ++ i) {
-      c = (*it)[i]; out_file.write((char*) &c, sizeof(char));
-    }
-  }
-  out_file.close();
-  return;
-}
-
 void SequenceSearch::IndexKmerFilter(
     const int mer_len, BioAlphabet &alpha,
     ReducedAlphabet &re_alpha, std::vector<std::string> &seqs,
@@ -276,32 +201,33 @@ void SequenceSearch::LoadKmerFilter(
 }
 
 void SequenceSearch::IndexKmerPosition(
-    BioAlphabet &alphabet, const int mer_len, 
-    std::vector<std::string> &seqs, const std::string &out_file
+    ReducedAlphabet &reduced, GappedPattern &pattern, 
+    int num_seqs, char **seqs, const std::string &out_file
 ) {
+
+  BioAlphabet alphabet(reduced);
   int i, j;
-  
-  int max_id = pow(alphabet.GetSize(), mer_len) + 1;
-  vector<vector<int> > mer_pos;
-  mer_pos.resize(max_id + 1);
-  KmerUnitcoder coder(alphabet, mer_len);
-  
-  for(i = 0; i < seqs.size(); ++ i) {
-    for(j = 0; j <= seqs[i].length() - mer_len; ++ j) {
-      string mr = seqs[i].substr(j, mer_len);
-      int mer_id = coder.EncodeInt(mr.c_str());
+  int pattern_weight = pattern.GetPatternWeight();
+  map<UInt64, vector<int> > mer_pos;
+  KmerUnitcoder coder(alphabet, pattern_weight);
+  UInt64 max_id = 0;
+  for(i = 0; i < num_seqs; ++ i) {
+    for(j = 0; j <= strlen(seqs[i]) - pattern_weight; ++ j) {
+      UInt64 mer_id = (UInt64) coder.EncodeInt(&seqs[i][j]);
       mer_pos[mer_id].push_back(i); mer_pos[mer_id].push_back(j); 
+      if(mer_id > max_id) max_id = mer_id;
     }
   }
   ofstream out_fh;
   out_fh.open(out_file, ios::out);
   // writing the kmer-readID associations
-  for(i = 0; i < mer_pos.size(); ++ i) {
-    out_fh << i << ":";
-    for(j = 0; j < mer_pos[i].size(); ++ j) {
-      out_fh << mer_pos[i][j] << ":";
+  for(auto it = mer_pos.begin(); it != mer_pos.end(); ++ it) {
+    out_fh << it->first << ":";
+    for(auto itj = it->second.begin(); itj < it->second.end(); ++ itj) {
+      out_fh << *itj << ":";
     }
     out_fh << endl;
+    
   }
   out_fh.close();
   return;

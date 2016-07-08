@@ -10,6 +10,7 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <cstring>
 #include <vector>
 #include <unordered_map>
 #include <set>
@@ -22,6 +23,9 @@
 #include "kmer_unitcoder.h"
 #include "kmer_filtering.h"
 #include "reduced_alphabet.h"
+#include "gapped_pattern.h"
+
+typedef uint64_t UInt64;
 
 struct AlignIntervalType  {
   // q1, q2 are locations in the query sequence
@@ -49,17 +53,6 @@ class SequenceSearch  {
       std::unordered_map<std::string, std::vector<int> > &seed_mer
   );
   
-  void ComputeReducedMap(
-      const int mer_len, BioAlphabet &alpha,
-      ReducedAlphabet &re_alpha, std::vector<std::string> &seqs,
-      std::unordered_map<std::string, std::set<KmerUnitType> > &reduced_map
-  );
-  
-  void WriteReducedMap(
-      const std::string &file, const int mer_len, BioAlphabet &alpha,
-      std::unordered_map<std::string, std::set<KmerUnitType> > &reduced_map
-  );
-  
   void IndexReducedMap(
       const int mer_len, BioAlphabet &alpha,
       ReducedAlphabet &re_alpha, std::vector<std::string> &seqs,
@@ -81,13 +74,7 @@ class SequenceSearch  {
       const std::string &file, 
       std::unordered_map<std::string, std::vector<int> > &seed_mer
   );
-  
-  void ComputeKmerFilter(
-      const int mer_len, BioAlphabet &alpha, std::vector<std::string> &seqs,
-      std::vector<std::string> &all_filters  
-  );
-  
-  void WriteKmerFilter(const std::string &file, std::vector<std::string> &all_filters);
+
   //************************  
   void IndexKmerFilter(
       const int mer_len, BioAlphabet &alpha,
@@ -97,8 +84,8 @@ class SequenceSearch  {
   void LoadKmerFilter(const std::string &file, std::vector<KmerFiltering> &bm_filters);  
   //************************  
   void IndexKmerPosition(
-      BioAlphabet &alphabet, const int mer_len, 
-      std::vector<std::string> &seqs, const std::string &out_file
+      ReducedAlphabet &reduced, GappedPattern &pattern, 
+      int num_seqs, char **seqs, const std::string &out_file
   );
   void LoadKmerPosition(
       BioAlphabet &alphabet, const std::string &in_file,

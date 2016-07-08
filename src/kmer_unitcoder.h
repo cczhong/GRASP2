@@ -10,7 +10,7 @@
 #include "bio_alphabet.h"
 
 // using 32-bit unitcoder
-typedef uint32_t KmerUnitType;
+typedef uint64_t KmerUnitType;
 
 class KmerUnitcoder{
  public:

@@ -16,6 +16,19 @@ BioAlphabet::BioAlphabet(const BioSequence s) {
   return;
 }
 
+BioAlphabet::BioAlphabet(ReducedAlphabet &reduced)  {
+  seq_type_ = OTHER;
+  char_map_.assign(256, -1);
+  inv_char_map_.assign(256, -1);
+  srand(time(NULL));
+  unordered_map<char, bool> nr_char;
+  for(auto it = reduced.alphabet_map_.begin(); it != reduced.alphabet_map_.end(); ++ it) {
+    char c = (char) (65 + it->second);
+    char_map_[c] = nr_char.size(); inv_char_map_[nr_char.size()] = c; nr_char[c] = true;
+  }
+  alphabet_size_ = nr_char.size();
+  return;
+}
 
 void BioAlphabet::InitProt(void) {
   alphabet_size_ = 25;

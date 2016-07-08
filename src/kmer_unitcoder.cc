@@ -55,7 +55,7 @@ KmerUnitType KmerUnitcoder::Encode(const char *s) {
 int KmerUnitcoder::EncodeInt(const char *s) {
   int k = 0, n = alphabet_.GetSize();
   // check potential overflow
-  if(pow(n, mer_len_) > 2147483646) {
+  if(pow(n, mer_len_) > pow(2, 8 * sizeof(KmerUnitType))) {
     cout << "KmerUnicoder::Error: k-mer size too long, overflow detected. Abort." << endl;
     exit(1);
   }

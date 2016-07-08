@@ -25,7 +25,7 @@ using namespace std;
 
 static string workspace_dir;
 static string db_file;
-static int alph_id;
+static int alph_id = 10;
 static int extd_len;
 static int num_threads = 1;
 static string verbose;
@@ -152,7 +152,10 @@ int main(int argc, char** argv)  {
     cout << "GRASP2-Build: Load peptide database done.";
     PrintElapsed(start_time, check_time, "");
   }
+  string db_stem = GetFileStem(db_file);
   //***************************
+  
+  /*
   // Construct Burrows-Wheeler Transformation
   start_time = MyTime();
   BWT bwt;
@@ -197,7 +200,6 @@ int main(int argc, char** argv)  {
   //***************************
   // Write the string graph to hard dist
   start_time = MyTime();
-  string db_stem = GetFileStem(db_file);
   string idx_unitig_file = workspace_dir + "/" + db_stem + ".utg";  
   strG.WriteGraph(protein_alphabet, seqs, idx_unitig_file);
   strG.Purge();
@@ -212,6 +214,8 @@ int main(int argc, char** argv)  {
     cout << "GRASP2-Build: Write string graph unitigs done.";
     PrintElapsed(start_time, check_time, "");
   }
+  */
+
   //***************************
   // Constructing k-mer mapping information
   //start_time = MyTime();
@@ -242,10 +246,19 @@ int main(int argc, char** argv)  {
   start_time = MyTime();
   SequenceSearch seq_search; 
   string idx_neighbor_file = workspace_dir + "/" + db_stem + ".knb";
-  seq_search.IndexKmerNeighbor(
-      mer_len, protein_alphabet, scoring_function, 
-      11, idx_neighbor_file
-  );  
+  
+  //seq_search.IndexKmerNeighbor(
+  //    mer_len, protein_alphabet, scoring_function, 
+  //    11, idx_neighbor_file
+  //);
+
+  GappedPattern gap_pattern;
+  seq_search.IndexKmerPosition(
+    reduced_alphabet, gap_pattern, 
+    num_seqs, seqs, idx_neighbor_file
+  );
+
+  
   if(is_verbose)  {
     check_time = MyTime();
     cout << "GRASP2-Build: Constructing and writing k-mer neighbors done. ";

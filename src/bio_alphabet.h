@@ -1,6 +1,8 @@
 #ifndef _BIO_ALPHABET_H_
 #define _BIO_ALPHABET_H_
 
+#include "reduced_alphabet.h"
+
 #include <iostream>
 #include <map>
 #include <cstdlib>
@@ -9,12 +11,13 @@
 #include <time.h>
 #include <vector>
 
-enum BioSequence {PROT, DNA, RNA};
+enum BioSequence {PROT, DNA, RNA, OTHER};
 
 class BioAlphabet{
  public:
   explicit BioAlphabet() {}
   explicit BioAlphabet(const BioSequence s);
+  explicit BioAlphabet(ReducedAlphabet &reduced);
   ~BioAlphabet() {}
   // returns a random character within the alphabet
   char RandomChar();
