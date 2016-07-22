@@ -67,8 +67,10 @@ int Loader::LoadFasta(BioAlphabet &alphabet, const char *file_name, char **heade
     if (line[0] == '>') {
       if (fasta_tag != "" && fasta_seq != "") {
         CheckSpecialChar(alphabet, fasta_seq);
-        RecordSequence(header, seq, fasta_tag, fasta_seq, count);
-        ++ count;
+        if(!IsLowComplexity(fasta_seq)) {
+          RecordSequence(header, seq, fasta_tag, fasta_seq, count);
+          ++ count;
+        }
       }
       fasta_tag = line.substr(1, line.length() - 1); fasta_seq = ""; 
     } else fasta_seq += line;
@@ -77,12 +79,26 @@ int Loader::LoadFasta(BioAlphabet &alphabet, const char *file_name, char **heade
   // handle the last sequence		
   if (fasta_tag != "" && fasta_seq != "") {
     CheckSpecialChar(alphabet, fasta_seq);
-    RecordSequence(header, seq, fasta_tag, fasta_seq, count);
-    ++ count;
+    if(!IsLowComplexity(fasta_seq))  {
+      RecordSequence(header, seq, fasta_tag, fasta_seq, count);
+      ++ count;
+    }
   }		
   return count;
 }
 
+bool Loader::IsLowComplexity(std::string &seq)  {
+  int mer_len = 2;
+  unordered_map<string, int> mer_hash;
+  for(int i = 0; i <= seq.length() - mer_len; ++ i) {
+    mer_hash[seq.substr(i, mer_len)] ++;
+  }
+  // check if the frequency of a specific kmer is greater than 1/3 of the total length
+  for(auto it = mer_hash.begin(); it != mer_hash.end(); ++ it) {
+    if(it->second > (int) (seq.length() - mer_len) / 3) return true;
+  }
+  return false;
+}
 
 // Obsolete code block
 /*

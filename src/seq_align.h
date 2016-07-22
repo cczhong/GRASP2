@@ -1,3 +1,6 @@
+#ifndef _SEQ_ALIGN_H_
+#define _SEQ_ALIGN_H_
+
 #include "scoring_function.h"
 
 #include <assert.h>
@@ -13,8 +16,7 @@
 	TODO: impelmenting the local and semiglobal alignment modules
 */
 
-#ifndef _SEQ_ALIGN_H_
-#define _SEQ_ALIGN_H_
+
 
 #ifndef _MAX_VALUE
 #define _MAX_VALUE 30000

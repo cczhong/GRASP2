@@ -2,6 +2,44 @@
 
 using namespace std;
 
+bool SortIvType(const IvType &a, const IvType &b) {
+  if(a.pivot_len_ > b.pivot_len_ || a.ivA_.second - a.ivA_.first > b.ivA_.second - b.ivA_.first) return true;
+  return false;
+}
+
+void IvSet::Sort(void) {
+  /*
+  cout << "======================" << endl;
+  for(int i = 0; i < iv_list_.size(); ++ i) {
+    cout << "len: " << iv_list_[i].pivot_len_ << endl;
+  }
+  cout << "======================" << endl;
+  */  
+  
+  int n = iv_list_.size();
+  if(n <= 1)  return;
+  IvType tmp;
+  for(int i = 0; i < (int) n / 2; ++ i) {
+    tmp = iv_list_[i]; iv_list_[i] = iv_list_[n - i - 1]; iv_list_[n - i - 1] = tmp;
+  }
+  if(Check())  return;
+  vector<IvType> sorted_iv_list = iv_list_;
+  int max_pivot_len = iv_list_[0].pivot_len_;
+  int min_pivot_len = iv_list_[0].pivot_len_;
+  for(int i = 1; i < n; ++ i) {
+    if(iv_list_[i].pivot_len_ > max_pivot_len) max_pivot_len = iv_list_[i].pivot_len_;
+    if(iv_list_[i].pivot_len_ < min_pivot_len) min_pivot_len = iv_list_[i].pivot_len_;
+  }
+  int idx = 0;
+  for(int i = max_pivot_len; i >= min_pivot_len; -- i) {
+    for(int j = 0; j < n; ++ j) {
+      if(iv_list_[j].pivot_len_ == i) sorted_iv_list[idx ++] = iv_list_[j];
+    }
+  }
+  iv_list_ = sorted_iv_list;
+  return;
+}
+
 // sorting the AlignType
 bool SortAlignTypeBySize(const AlignType &a, const AlignType &b)  {
   int a_dist = a.q_end - a.q_begin;
@@ -89,47 +127,6 @@ void BWTSearch::SearchAllSubRegions(
       all_pos.push_back(temp_pos[i]);
   }
   return;
-  /* OBSOLETE
-  BWTIDX bwt_size = bwt.GetSize();
-  BWTIDX *begin = new BWTIDX [len + 1]; begin[len] = 0;
-  BWTIDX *end = new BWTIDX [len + 1]; end[len] = bwt_size;
-  int i, j, k;
-  // extend the searches one-by-one
-  int right_boundary = len;
-  for(i = len - 1; i >= 0; -- i) {
-    bwt.UpdateRange(str[i], begin[i + 1], end[i + 1], begin[i], end[i]);   
-    //cout <<  i << ":  " << begin[i + 1] << "  " << end[i + 1] << "  " << begin[i] << "  " << end[i] << endl; 
-    if(begin[i] >= end[i])  {
-      // if this is the terminal, record the information 
-      if(right_boundary - i >= min_len) {
-        AlignType a; 
-        a.q_begin = i + 1; a.q_end = right_boundary > len - 1 ? len - 1 : right_boundary, 
-        a.bwt_begin = begin[i + 1]; a.bwt_end = end[i + 1];
-        all_pos.push_back(a);
-      }
-      // find the next right bound
-      while(i >= 0) {
-        bwt.UpdateRange(str[i], 0, bwt_size, begin[i], end[i]);
-        if(begin[i] < end[i])  {
-          right_boundary = i; break;
-        } else  {
-          // NOTE!!!: the change of index "i" will affect the outer loop
-          -- i;
-        }
-      }
-    }
-  }
-  // record the last chunk
-  if(begin[0] < end[0] && right_boundary >= min_len) {
-    AlignType a; 
-    a.q_begin = 0; a.q_end = right_boundary > len - 1 ? len - 1 : right_boundary; 
-    a.bwt_begin = begin[0]; a.bwt_end = end[0];
-    all_pos.push_back(a);
-  }
-  delete [] begin;
-  delete [] end;
-  return;
-  */  
 }
 
 void BWTSearch::Search(
@@ -357,30 +354,206 @@ void BWTSearch::SearchBeginIntervals(const char* seq, const int min_len, IvInfo 
     fw_range_terminal.first = occbegin;
     fw_range_terminal.second = occend;
     // record such interval
-    search_info.intervals_.PushA(fw_range_terminal.first, fw_range_terminal.second);
-    search_info.intervals_.PushB(re_range_terminal.first, re_range_terminal.second);
-    search_info.intervals_.PushLen(i + 1);
+    search_info.intervals_.PushIV(
+        fw_range_terminal.first, fw_range_terminal.second, 
+        re_range_terminal.first, re_range_terminal.second, 
+        i + 1, i + 1
+    );
     
     //cout << "overlap recorded !!!" << endl;
   }
   return;
 }
 
+bool BWTSearch::UpdateForwardBackward(
+    IvInfo &search_info, const char c, 
+    std::pair<BWTIDX, BWTIDX> &fw_range, std::pair<BWTIDX, BWTIDX> &re_range
+) {
+  BWTIDX occbegin = search_info.bwtF_->CountOccurrence(c, fw_range.first);
+  BWTIDX occend = search_info.bwtF_->CountOccurrence(c, fw_range.second);
+  if(occbegin >= occend)  return false; // remember the pivot sequence also exists in the BWT, so it should at least hit itself
+  re_range.first = re_range.first
+      + search_info.bwtF_->CountLexicoLess(c, fw_range.second)
+      - search_info.bwtF_->CountLexicoLess(c, fw_range.first); 
+  re_range.second = re_range.first + occend - occbegin;
+  int c_id = search_info.bwtF_->alphabet_.GetCharMap(c);
+  fw_range.first = search_info.bwtF_->acc_freq_[c_id + 1] + occbegin;
+  fw_range.second = search_info.bwtF_->acc_freq_[c_id + 1] + occend;
+  return true;
+}
+
+void BWTSearch::SearchBeginIntervals_V2(const char* seq, const int min_len, IvInfo &search_info) {
+  int n = strlen(seq);
+  // if the total length of the read is less than the minimum overlap, return
+  if(n < min_len) return;
+  // initialize the search for the overlapping region
+  //search_info.bwtF_->PrintBWT();
+  //search_info.bwtR_->PrintBWT();
+  //cout << "pivor sequence:  " << seq << endl;
+  queue<FwReSearchType> candidates;
+  FwReSearchType init;
+  init.fw_range.first = init.re_range.second = 0;
+  init.fw_range.second = init.re_range.second = search_info.bwtF_->GetSize();
+  init.search_cost = 0; init.pivot_len = 0; init.db_len = 0;
+  candidates.push(init);
+  queue<FwReSearchType> passed;
+  while(!candidates.empty()) {
+    FwReSearchType current = candidates.front(); candidates.pop();
+    //cout << "Current info:  " << current.s << " " << current.search_cost << "  " << current.pivot_len << "  " << current.db_len << "  " << current.fw_range.first << "  " << current.fw_range.second << "  " << current.re_range.first << "  " << current.re_range.second << endl;
+    // if the score drops below the threshold, skip the search
+    if(current.search_cost > cost) {
+      //cout << "cost over threshold" << endl;      
+      continue;
+    }
+    // if the length satisfy the minimum length, record the search as passed
+    if(current.pivot_len >= min_len)  {
+      //cout << "min length reached" << endl;
+      passed.push(current); continue;
+    }
+    char c = seq[n - current.pivot_len - 1];
+    //cout << "current character: " << c << endl;
+    pair<BWTIDX, BWTIDX> fw_range_record = current.fw_range;
+    pair<BWTIDX, BWTIDX> re_range_record = current.re_range;
+    //string s_record = current.s;
+    bool success = UpdateForwardBackward(search_info, c, current.fw_range, current.re_range);
+    if(success && (current.search_cost > 0 || current.fw_range.second - current.fw_range.first > 1))  {
+      // record the search
+      //current.s += c;
+      current.pivot_len ++; current.db_len ++; candidates.push(current); 
+      //cout << "pushed match" << endl;
+    }   
+    // rollback to the previous information    
+    current.fw_range = fw_range_record; current.re_range = re_range_record; 
+    current.pivot_len --; current.db_len --;
+    //current.s = s_record;
+    // insertion in the query
+    FwReSearchType next_ins = current;
+    next_ins.pivot_len ++; next_ins.search_cost += g_cost;  // do not need to increase db_len
+    if(next_ins.search_cost <= cost) {
+      candidates.push(next_ins);
+      //cout << "pushed insertion" << endl;
+    }
+    // mutation and deletion in the query, try all possible characters in the alphabet
+    for(int i = 0; i < search_info.bwtF_->alphabet_.alphabet_size_; ++ i) {
+      char ca = search_info.bwtF_->alphabet_.GetInvCharMap(i);
+      //cout << "current character all test:  " << ca << endl;
+      // refine the range
+      FwReSearchType next = current;
+      success = UpdateForwardBackward(search_info, ca, next.fw_range, next.re_range);
+      if(success) {
+        //next.s += ca;
+        // deletion case; do not increase pivot_len but need to increase db_len, and add gap cost
+        next.search_cost += g_cost; next.db_len ++; 
+        if(next.search_cost <= cost && next.db_len > 1) {
+          candidates.push(next);
+          //cout << "pushed deletion: " << ca << endl;
+        }
+        // mutation case; add length and add mutation cost (remember to rollback the g_cost)
+        if(ca != c)  {
+          // do not increase db_len because it has already been increase in the calculation of deletion case
+          next.pivot_len ++; next.search_cost += m_cost - g_cost; 
+          if(next.search_cost <= cost) candidates.push(next);
+          //cout << "pushed mutation: " << ca << endl;
+        }
+        
+      } 
+    }
+  }  
+
+  // continue searching all intervals that have been passed; also search for terminal character
+  while(!passed.empty()) {
+    FwReSearchType current = passed.front(); passed.pop();
+    //cout << "In passed Current info:  " << current.s << " " << current.search_cost << "  " << current.pivot_len << "  " << current.db_len << "  " << current.fw_range.first << "  " << current.fw_range.second << "  " << current.re_range.first << "  " << current.re_range.second << endl;
+    // if the score drops below the threshold, skip the search
+    if(current.search_cost > cost) continue;
+    // if the length satisfy the minimum length, record the search as passed
+    if(current.pivot_len >= n)   continue;
+
+    // check if this is a terminal
+    pair<BWTIDX, BWTIDX> fw_range_record = current.fw_range;
+    pair<BWTIDX, BWTIDX> re_range_record = current.re_range;
+    bool success = UpdateForwardBackward(search_info, DELIM, current.fw_range, current.re_range);
+    if(success && (current.search_cost > 0 || current.fw_range.second - current.fw_range.first > 1)) {
+      // record the interval
+      if(!search_info.intervals_.IsRedundantA(current.fw_range.first, current.fw_range.second)) {
+        search_info.intervals_.PushIV(
+            current.fw_range.first, current.fw_range.second,
+            current.re_range.first, current.re_range.second, 
+            current.pivot_len, current.db_len
+        );
+        //cout << "Overlap detected:  " << current.fw_range.first << " " << current.fw_range.second << "  " << current.re_range.first << " " << current.re_range.second << endl;
+      }
+    }
+    // rollback the range
+    current.fw_range = fw_range_record;
+    current.re_range = re_range_record;
+
+    // attempt to further extend
+    char c = seq[n - current.pivot_len - 1];
+    //cout << "current character: " << c << endl;
+    fw_range_record = current.fw_range;
+    re_range_record = current.re_range;
+    //string s_record = current.s;
+    success = UpdateForwardBackward(search_info, c, current.fw_range, current.re_range);
+    if(success)  {
+      // record the search
+      //current.s += c;
+      current.pivot_len ++; current.db_len ++; passed.push(current);
+      //cout << "match found!!!" << endl;
+    }
+    // roll back to the previous information    
+    current.fw_range = fw_range_record; current.re_range = re_range_record; 
+    current.pivot_len --; current.db_len --; 
+    //current.s = s_record;
+    // insertion in the query
+    FwReSearchType next_ins = current;
+    next_ins.pivot_len ++; next_ins.search_cost += g_cost; // do not need to increase db_len
+    //cout << "New insertion cost:  " << next_ins.search_cost << endl;
+    if(next_ins.search_cost <= cost) {
+      passed.push(next_ins);
+      //cout << "pushed insertion" << endl;
+    }
+    // mutation and deletion in the query, try all possible characters in the alphabet
+    for(int i = 0; i < search_info.bwtF_->alphabet_.alphabet_size_; ++ i) {
+      char ca = search_info.bwtF_->alphabet_.GetInvCharMap(i);
+      // refine the range
+      //cout << "tested chracater:  " << ca << endl;
+      FwReSearchType next = current;
+      success = UpdateForwardBackward(search_info, ca, next.fw_range, next.re_range);
+      if(success) {
+        //next.s += ca;
+        // deletion case; do not change length and add gap cost
+        next.search_cost += g_cost; next.db_len ++; 
+        //cout << "New deletion cost:  " << next.search_cost << endl;
+        if(next.search_cost <= cost && next.db_len > 1)  passed.push(next);
+        //cout << "pushed deletion" << endl;
+        // mutation case; add length and add mutation cost (remember to rollback the g_cost)
+        if(ca != c)  {
+          next.pivot_len ++; next.search_cost += m_cost - g_cost; 
+          //cout << "New mutation cost:  " << next.search_cost << endl;
+          if(next.search_cost <= cost) passed.push(next);
+          //cout << "pushed mutation" << endl;
+        }
+      } 
+    }
+  }
+  return;
+}
 
 void BWTSearch::FindIrreducible(
     IvInfo &search_info, std::vector<BWTIDX> &ir_positions, std::vector<int> &ir_overlap
-) {
-  
-  search_info.intervals_.Reverse();  
+) {  
+  if(search_info.intervals_.GetSize() <= 0)  return;
+  search_info.intervals_.Sort();
   // check boundary conditions
   if(!search_info.intervals_.Check()) {
     cout << "Warning: corrupted intervals, no irreducible edges can be detected." << endl;
     return;
   }
-  if(search_info.intervals_.GetSize() <= 0)  return;
   // the stack contains all intervals that ends with the same sequences
   stack<IvSet> candidates;
   candidates.push(search_info.intervals_);
+  //cout << "size of candidate ranges:  " << candidates.size() << endl;
   // recursively check each intervals
   bool used_char[256];  
   while(!candidates.empty()) {
@@ -396,9 +569,10 @@ void BWTSearch::FindIrreducible(
     memset(used_char, 0, 256);
     for(i = 0; i < n; ++ i) { // for each interval
       // for each character in the alphabet (look at the reverse BWT)
-      for(k = current.ivB_[i].first; k < current.ivB_[i].second; ++ k) { 
+      for(k = current.iv_list_[i].ivB_.first; k < current.iv_list_[i].ivB_.second; ++ k) { 
         //cout << "Interval info: " << k << ": " <<  current.len_[i] << "  " << current.ivA_[i].first << " " << current.ivA_[i].second << "  " << current.ivB_[i].first << " " << current.ivB_[i].second << endl;
         char c = (char) search_info.bwtR_->bwt_[k]; // the kth char in the reverse BWT string
+        //cout << "Character to be searched:  " << c << endl;
         // check if the character has been tested
         if(c == DELIM || used_char[c])  continue;
         used_char[c] = true;
@@ -406,7 +580,7 @@ void BWTSearch::FindIrreducible(
         // try to update the intervals by appending such character
         for(j = i; j < n; ++ j) {
           // try to append the character
-          pair<BWTIDX, BWTIDX> r1 = search_info.bwtR_->UpdateRange(c, current.ivB_[j]);
+          pair<BWTIDX, BWTIDX> r1 = search_info.bwtR_->UpdateRange(c, current.iv_list_[j].ivB_);
           // try to check if the read ends after appending the character
           pair<BWTIDX, BWTIDX> r2 = search_info.bwtR_->UpdateRange(DELIM, r1); 
           //cout << "phase: " << j << ": " << r1.first << " " << r1.second << " " << r2.first << "  " << r2.second << endl; 
@@ -414,21 +588,25 @@ void BWTSearch::FindIrreducible(
           // in cases where multiple reads end at the same time, take the first position
           // terminate current loop
           if(j == i && r1.second - r1.first == r2.second - r2.first)  {
-            //cout << "irreducible read found!!!" << endl;
+            //cout << "irreducible read found!!!  " << current.pivot_len_[j] << " " << current.db_len_[j] << endl;
             ir_positions.push_back(r2.first); 
-            ir_overlap.push_back(current.len_[j]);
+            ir_overlap.push_back(current.iv_list_[j].db_len_);
             break;
           }
           // for other reads that do not terminate, add to interval set next
           if(r1.second - r1.first >= 1 && r2.second - r2.first <= 0)  {
             // we only need to record intervals at the reverse BWT
             //cout << "read extension recorded!!!" << endl;
-            next.PushA(-1, -1); next.PushB(r1.first, r1.second); next.PushLen(current.len_[j]);
+            next.PushIV(
+              -1, -1, r1.first, r1.second, 
+              current.iv_list_[j].pivot_len_, current.iv_list_[j].db_len_
+            );
           }
         }
         if(next.GetSize() > 0)  candidates.push(next);
       }
     }
+    //cout << "============ done handling current interval group ===============  " << candidates.size() << endl;
   }
   return;
 }

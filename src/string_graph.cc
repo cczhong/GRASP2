@@ -99,6 +99,7 @@ void StringGraph::ComputeExtension(
     for(j = 0; j < n; ++ j) r_seq[j] = seq[i][n - j - 1];
     r_seq[n] = '\0';
     AlignType pos;
+    //cout << "=========================================" << endl;
     if(!bwt_searcher.IsContainedRead(r_seq, rev_bwt, pos)) {
       // recording information regarding the source read
       ExtType ext; ext.source_ = pos.bwt_begin; ext.rid_ = offset + i;
@@ -140,7 +141,7 @@ int StringGraph::RemoveTipsBeforeCondense()  {
         // if the source contains multiple out_edges, only reserve the one with longest overlap
         auto it_e = boost::out_edges(s, *p_graph_).first;
         while(it_e != boost::out_edges(s, *p_graph_).second) {
-          if((*p_graph_)[*it_e].len_ > l || 
+          if((*p_graph_)[*it_e].len_ > l ||
               boost::out_degree(boost::target(*it_e, *p_graph_), *p_graph_) > 0
           ) {
             to_delete.push_back(v); break;
@@ -148,9 +149,6 @@ int StringGraph::RemoveTipsBeforeCondense()  {
           ++ it_e;
         }
       }
-    } else if(boost::out_degree(v, *p_graph_) == 0 && boost::in_degree(v, *p_graph_) > 1) {
-      // if multiple paths end at one vertex, remove the vertex
-      to_delete.push_back(v);
     } else if(boost::in_degree(v, *p_graph_) == 0 && boost::out_degree(v, *p_graph_) == 1) {
       // the out_edge of that vertex
       BoostSTREdge e = *(boost::out_edges(v, *p_graph_).first); int l = (*p_graph_)[e].len_;
@@ -168,9 +166,6 @@ int StringGraph::RemoveTipsBeforeCondense()  {
           ++ it_e;
         }
       }
-    } else if(boost::in_degree(v, *p_graph_) == 0 && boost::out_degree(v, *p_graph_) > 1) {
-      // if multiple paths begin at one vertex, remove the vertex
-      to_delete.push_back(v);
     }
   }
   // remove the edges and the vertices
@@ -189,6 +184,210 @@ int StringGraph::RemoveTipsBeforeCondense()  {
     //boost::remove_vertex(*it, *p_graph_);
   }
   return to_delete.size();
+}
+
+int StringGraph::RemoveBubbleRight(const int step)  {
+  if(step < 1)  return 0;
+  int num_removed = 0;
+  auto it_v = boost::vertices(*p_graph_).first;
+  while(it_v != boost::vertices(*p_graph_).second) {
+    BoostSTRVertex v = *it_v; ++ it_v;
+    // handle the current vertex
+    if(boost::out_degree(v, *p_graph_) > 1) {
+      //cout << "=============== source:  " << (*p_graph_)[v].rid_ << endl;
+      stack<vector<BoostSTREdge> > trav_edges;
+      stack<vector<BoostSTRVertex> > trav_vertices;      
+      // initialize the stacks
+      auto it_e = boost::out_edges(v, *p_graph_).first;
+      while(it_e != boost::out_edges(v, *p_graph_).second) {
+        (*p_graph_)[*it_e].tag_ = false;
+        vector<BoostSTREdge> ve; ve.push_back(*it_e); trav_edges.push(ve);
+        vector<BoostSTRVertex> vv; vv.push_back(boost::target(*it_e, *p_graph_)); trav_vertices.push(vv);
+        ++ it_e;
+      }
+      // progressive extend each vertex until reaches step limit or terminal
+      vector<vector<BoostSTREdge> > record_edge;
+      vector<vector<BoostSTRVertex> > record_vertex;
+      while(!trav_edges.empty()) {
+        vector<BoostSTREdge> current_edge = trav_edges.top(); trav_edges.pop();
+        vector<BoostSTRVertex> current_vertex = trav_vertices.top(); trav_vertices.pop();
+        BoostSTRVertex last = current_vertex[current_vertex.size() - 1];
+        
+        //cout << "last:  " << (*p_graph_)[last].rid_ << endl;
+
+        if(current_edge.size() > step || boost::out_degree(last, *p_graph_) == 0)  {
+          //cout << "max reached!!!" << endl;
+          // terminate the extension, record current path that has been traversed
+          record_edge.push_back(current_edge); record_vertex.push_back(current_vertex);
+          continue;
+        }
+        // otherwise we need to extend progressively
+        auto it_et = boost::out_edges(last, *p_graph_).first;
+        while(it_et != boost::out_edges(last, *p_graph_).second) {
+          
+          //cout << "tested next: " << (*p_graph_)[boost::target(*it_et, *p_graph_)].rid_ << endl;
+          (*p_graph_)[*it_et].tag_ = false;
+          vector<BoostSTREdge> next_edge = current_edge; next_edge.push_back(*it_et); trav_edges.push(next_edge);
+          vector<BoostSTRVertex> next_vertex = current_vertex ; next_vertex.push_back(boost::target(*it_et, *p_graph_)); trav_vertices.push(next_vertex);
+          ++ it_et;
+          
+        }
+      }
+      // go over traversed vertices to find if some paths end in the same terminal
+      unordered_map<BoostSTRVertex, vector<pair<int, int> > > vertex_in_path;
+      for(int i = 0; i < record_vertex.size(); ++ i) {
+        for(int j = 0; j < record_vertex[i].size(); ++ j) {
+          vertex_in_path[record_vertex[i][j]].push_back(std::make_pair(i, j));
+        }
+      }
+      // check if bubble exists
+      for(auto itt = vertex_in_path.begin(); itt != vertex_in_path.end(); ++ itt) {
+        int maintain_id = -1, maintain_pos = - 1;
+        if(itt->second.size() > 1)  {                  
+          // finding the longest path
+          int mx_id = (itt->second)[0].first, mx_pos = (itt->second)[0].second;
+          for(int i = 1; i < itt->second.size(); ++ i) {
+            int id = (itt->second)[i].first;
+            int pos = (itt->second)[i].second;
+            if(pos > mx_pos) { mx_pos = pos; mx_id = id; }
+          }
+          maintain_id = mx_id; maintain_pos = mx_pos;          
+        } else if((itt->second)[0].second == record_edge[(itt->second)[0].first].size() - 1) {
+          //cout << "single end to maintain: " << (*p_graph_)[itt->first].rid_ << endl;
+          maintain_id = (itt->second)[0].first;
+          maintain_pos = (itt->second)[0].second;
+        }
+        if(maintain_id < 0) continue;
+        for(int i = 0; i <= maintain_pos; ++ i) {
+          //BoostSTREdge ce = record_edge[maintain_id][i];
+          //BoostSTRVertex sv = boost::source(ce, *p_graph_);
+          //BoostSTRVertex tv = boost::target(ce, *p_graph_);
+          //cout << "maintained:  " << (*p_graph_)[sv].rid_ << "  " << (*p_graph_)[tv].rid_ << endl;
+          (*p_graph_)[record_edge[maintain_id][i]].tag_ = true;    
+        }
+      }
+      for(auto itt = vertex_in_path.begin(); itt != vertex_in_path.end(); ++ itt) {
+        if(itt->second.size() > 1)  { 
+          for(int i = 0; i < itt->second.size(); ++ i) {
+            int id = (itt->second)[i].first;
+            int pos = (itt->second)[i].second;
+            for(int j = 0; j <= pos; ++ j) {
+              BoostSTRVertex sv = j == 0 ? v : record_vertex[id][j - 1];
+              BoostSTRVertex tv = record_vertex[id][j];
+              if(boost::edge(sv, tv, *p_graph_).second && !(*p_graph_)[boost::edge(sv, tv, *p_graph_).first].tag_)  {
+                boost::remove_edge(sv, tv, *p_graph_);
+                ++ num_removed;
+                //cout << "Edge deleted!!!" << "  " << (*p_graph_)[sv].rid_ << "  " << (*p_graph_)[tv].rid_ << endl;     
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return num_removed;
+}
+
+int StringGraph::RemoveBubbleLeft(const int step)  {
+  if(step < 1)  return 0;
+  int num_removed = 0;
+  auto it_v = boost::vertices(*p_graph_).first;
+  while(it_v != boost::vertices(*p_graph_).second) {
+    BoostSTRVertex v = *it_v; ++ it_v;
+    // handle the current vertex
+    if(boost::in_degree(v, *p_graph_) > 1) {
+      //cout << "=============== source:  " << (*p_graph_)[v].rid_ << endl;
+      stack<vector<BoostSTREdge> > trav_edges;
+      stack<vector<BoostSTRVertex> > trav_vertices;      
+      // initialize the stacks
+      auto it_e = boost::in_edges(v, *p_graph_).first;
+      while(it_e != boost::in_edges(v, *p_graph_).second) {
+        (*p_graph_)[*it_e].tag_ = false;
+        vector<BoostSTREdge> ve; ve.push_back(*it_e); trav_edges.push(ve);
+        vector<BoostSTRVertex> vv; vv.push_back(boost::source(*it_e, *p_graph_)); trav_vertices.push(vv);
+        ++ it_e;
+      }
+      // progressive extend each vertex until reaches step limit or terminal
+      vector<vector<BoostSTREdge> > record_edge;
+      vector<vector<BoostSTRVertex> > record_vertex;
+      while(!trav_edges.empty()) {
+        vector<BoostSTREdge> current_edge = trav_edges.top(); trav_edges.pop();
+        vector<BoostSTRVertex> current_vertex = trav_vertices.top(); trav_vertices.pop();
+        BoostSTRVertex last = current_vertex[current_vertex.size() - 1];
+        
+        //cout << "last:  " << (*p_graph_)[last].rid_ << endl;
+
+        if(current_edge.size() > step || boost::in_degree(last, *p_graph_) == 0)  {
+          //cout << "max reached!!!" << endl;
+          // terminate the extension, record current path that has been traversed
+          record_edge.push_back(current_edge); record_vertex.push_back(current_vertex);
+          continue;
+        }
+        // otherwise we need to extend progressively
+        auto it_et = boost::in_edges(last, *p_graph_).first;
+        while(it_et != boost::in_edges(last, *p_graph_).second) {
+          
+          //cout << "tested next: " << (*p_graph_)[boost::target(*it_et, *p_graph_)].rid_ << endl;
+          (*p_graph_)[*it_et].tag_ = false;
+          vector<BoostSTREdge> next_edge = current_edge; next_edge.push_back(*it_et); trav_edges.push(next_edge);
+          vector<BoostSTRVertex> next_vertex = current_vertex ; next_vertex.push_back(boost::source(*it_et, *p_graph_)); trav_vertices.push(next_vertex);
+          ++ it_et;
+          
+        }
+      }
+      // go over traversed vertices to find if some paths end in the same terminal
+      unordered_map<BoostSTRVertex, vector<pair<int, int> > > vertex_in_path;
+      for(int i = 0; i < record_vertex.size(); ++ i) {
+        for(int j = 0; j < record_vertex[i].size(); ++ j) {
+          vertex_in_path[record_vertex[i][j]].push_back(std::make_pair(i, j));
+        }
+      }
+      // check if bubble exists
+      for(auto itt = vertex_in_path.begin(); itt != vertex_in_path.end(); ++ itt) {
+        int maintain_id = -1, maintain_pos = - 1;
+        if(itt->second.size() > 1)  {                  
+          // finding the longest path
+          int mx_id = (itt->second)[0].first, mx_pos = (itt->second)[0].second;
+          for(int i = 1; i < itt->second.size(); ++ i) {
+            int id = (itt->second)[i].first;
+            int pos = (itt->second)[i].second;
+            if(pos > mx_pos) { mx_pos = pos; mx_id = id; }
+          }
+          maintain_id = mx_id; maintain_pos = mx_pos;          
+        } else if((itt->second)[0].second == record_edge[(itt->second)[0].first].size() - 1) {
+          //cout << "single end to maintain: " << (*p_graph_)[itt->first].rid_ << endl;
+          maintain_id = (itt->second)[0].first;
+          maintain_pos = (itt->second)[0].second;
+        }
+        if(maintain_id < 0) continue;
+        for(int i = 0; i <= maintain_pos; ++ i) {
+          //BoostSTREdge ce = record_edge[maintain_id][i];
+          //BoostSTRVertex sv = boost::source(ce, *p_graph_);
+          //BoostSTRVertex tv = boost::target(ce, *p_graph_);
+          //cout << "maintained:  " << (*p_graph_)[sv].rid_ << "  " << (*p_graph_)[tv].rid_ << endl;
+          (*p_graph_)[record_edge[maintain_id][i]].tag_ = true;    
+        }
+      }
+      for(auto itt = vertex_in_path.begin(); itt != vertex_in_path.end(); ++ itt) {
+        if(itt->second.size() > 1)  { 
+          for(int i = 0; i < itt->second.size(); ++ i) {
+            int id = (itt->second)[i].first;
+            int pos = (itt->second)[i].second;
+            for(int j = 0; j <= pos; ++ j) {
+              BoostSTRVertex sv = record_vertex[id][j];
+              BoostSTRVertex tv = j == 0 ? v : record_vertex[id][j - 1];
+              if(boost::edge(sv, tv, *p_graph_).second && !(*p_graph_)[boost::edge(sv, tv, *p_graph_).first].tag_)  {
+                boost::remove_edge(sv, tv, *p_graph_);
+                ++ num_removed;
+                //cout << "Edge deleted!!!" << "  " << (*p_graph_)[sv].rid_ << "  " << (*p_graph_)[tv].rid_ << endl;     
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return num_removed;
 }
 
 // check if there exists some un-labeled vertex or un-labeld path
@@ -596,6 +795,7 @@ void StringGraph::GetHighScoringPaths(
     std::vector<BoostSTREdge> &graph_edge,
     std::vector<int> &edge_ID, std::vector<int> &score, 
     std::vector<std::pair<int, int> > &q_interval,
+    std::vector<std::pair<int, int> > &t_interval,
     const double sim_cutoff,
     std::vector<std::string> &high_scoring_seqs
 ) {
@@ -611,6 +811,7 @@ void StringGraph::GetHighScoringPaths(
     SeqAlnInfoType ai; 
     ai.id = edge_ID[i]; ai.score = score[i];
     ai.q1 = q_interval[i].first; ai.q2 = q_interval[i].second;
+    ai.t1 = t_interval[i].first; ai.t2 = t_interval[i].second;
     seed_seqs.push_back(ai);
     if(score[i] > 0 && 
         (aligned_seqs.find(edge_ID[i]) == aligned_seqs.end() || 
@@ -638,11 +839,14 @@ void StringGraph::GetHighScoringPaths(
     if(it->score < cutoff) break;
     // use the current edge sequence as the seed
     BoostSTREdge seed_edge = graph_edge[it->id];
+    int t_len = edge_seqs[it->id].length();
     // extend in both directions
     //cout << "left extension called" << endl;
     vector<pair<string, int> > ext_seqs_left, ext_seqs_right;
+    int left_len = it->q1 > it->t1 ? it->q1 - it-> q2 : 0;
+    int right_len = (query_len - it->q2) > (t_len - it->t2) ? (query_len - it->q2) - (t_len - it->t2) : 0;
     ProgressiveExtendLeft(
-        seed_edge, it->q1, edge_seqs, 
+        seed_edge, t_len + left_len, edge_seqs, 
         aligned_seqs, ext_seqs_left, visited
     );
     //cout << "left extension done" << endl;
@@ -667,7 +871,7 @@ void StringGraph::GetHighScoringPaths(
     
     //cout << "right extension called" << endl;
     ProgressiveExtendRight(
-        seed_edge, query_len - it->q2, edge_seqs, 
+        seed_edge, t_len + right_len, edge_seqs, 
         aligned_seqs, ext_seqs_right, visited
     );
     //cout << "right extension done" << endl;
@@ -714,7 +918,8 @@ void StringGraph::GetHighScoringPaths(
     std::vector<std::string> &edge_seqs,
     std::vector<BoostSTREdge> &graph_edge,
     const int num_seqs, int *edge_ID, int *score, 
-    int *q_interval, const double sim_cutoff,
+    int *q_interval, int *t_interval,
+    const double sim_cutoff,
     std::vector<std::string> &high_scoring_seqs
 ) {
   int i, j;
@@ -725,6 +930,7 @@ void StringGraph::GetHighScoringPaths(
     SeqAlnInfoType ai; 
     ai.id = edge_ID[i]; ai.score = score[i];
     ai.q1 = q_interval[2 * i]; ai.q2 = q_interval[2 * i + 1];
+    ai.t1 = t_interval[2 * i]; ai.t2 = t_interval[2 * i + 1];
     seed_seqs.push_back(ai);
     if(score[i] > 0 && 
         (aligned_seqs.find(edge_ID[i]) == aligned_seqs.end() || 
@@ -745,6 +951,7 @@ void StringGraph::GetHighScoringPaths(
   for(auto it = seed_seqs.begin(); it != seed_seqs.end(); ++ it) {
     // skip the sequences that have been traversed
     if(visited.find(it->id) != visited.end())  continue;
+    // this is the orphan reads, cannot extend and consider sole read directly
     if(it->id >= graph_edge.size()) {
       high_scoring_seqs.push_back(edge_seqs[it->id]);
       continue;
@@ -754,9 +961,16 @@ void StringGraph::GetHighScoringPaths(
     BoostSTREdge seed_edge = graph_edge[it->id];
     // extend in both directions
     //cout << "left extension called" << endl;
+    //int t_len = edge_seqs[it->id].length() + query_len;
+
+    int t_len = edge_seqs[it->id].length();
     vector<pair<string, int> > ext_seqs_left, ext_seqs_right;
+    int left_len = it->q1 > it->t1 ? it->q1 - it-> q2 : 0;
+    int right_len = (query_len - it->q2) > (t_len - it->t2) ? (query_len - it->q2) - (t_len - it->t2) : 0;
+
+    
     ProgressiveExtendLeft(
-        seed_edge, it->q1, edge_seqs, 
+        seed_edge, t_len + left_len, edge_seqs, 
         aligned_seqs, ext_seqs_left, visited
     );
     //cout << "left extension done" << endl;
@@ -781,7 +995,7 @@ void StringGraph::GetHighScoringPaths(
     
     //cout << "right extension called" << endl;
     ProgressiveExtendRight(
-        seed_edge, query_len - it->q2, edge_seqs, 
+        seed_edge, t_len + right_len, edge_seqs, 
         aligned_seqs, ext_seqs_right, visited
     );
     //cout << "right extension done" << endl;

@@ -1,12 +1,12 @@
+#ifndef _SCORING_FUNCTION_H_
+#define _SCORING_FUNCTION_H_
+
 #include <assert.h>
 #include <iostream>
 #include <map>
 #include <cmath>
 #include <cstdlib>
 #include <vector>
-
-#ifndef _SCORING_FUNCTION_H_
-#define _SCORING_FUNCTION_H_
 
 #ifndef _MAX_VALUE
 #define _MAX_VALUE 30000

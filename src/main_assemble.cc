@@ -11,6 +11,7 @@
 #include "scoring_prot.h"
 #include "reduced_alphabet.h"
 #include "kmer_filtering.h"
+#include "contig_refinement.h"
 
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
@@ -33,10 +34,10 @@ static double e_value;
 static int band_size;
 static int gap_open;
 static int gap_extend;
-static double seed_score_scale = 0.9;
 static int scoring_matrix = 0;
 static int num_threads = 1;
 static string verbose;
+static string check_orphan;
 
 static int mer_len = 3;
 
@@ -90,14 +91,13 @@ int main(int argc, char** argv)  {
       ("contig_out", boost::program_options::value<string>(&output), "assembled contigs output (in FASTA format)")
       ("alignment_out", boost::program_options::value<string>(&aln_output), "alignment output (between query and contigs, in BLAST-style format)")
       ("index", boost::program_options::value<string>(&workspace_dir)->default_value("index"), "working directory where the indexing files should be found")
-      ("seed_score_scale", boost::program_options::value<double>(&seed_score_scale)->default_value(0.9), "selectivity for the seeds (between 0-1; higher value means less seeds/faster runtime)")
-      ("scoring_matrix", boost::program_options::value<int>(&scoring_matrix)->default_value(0), "scoring matrix\n 0: BLOSUM62, 1: BLOSUM80, 2: BLOSUM90,\n 3: BLOSUM50, 4: BLOSUM45, 5: PAM250,\n 6: PAM70, 7: PAM30")
       ("gap_open", boost::program_options::value<int>(&gap_open)->default_value(-10), "gap open penalty for sequence alignment")
       ("gap_extend", boost::program_options::value<int>(&gap_extend)->default_value(-1), "gap extension penalty for sequence alignment")
       ("band_size", boost::program_options::value<int>(&band_size)->default_value(40), "band size for sequence alignment")
       ("e_value", boost::program_options::value<double>(&e_value)->default_value(10), "e-value cutoff (Karlin-Altschul statistics)")
+      ("orphan", boost::program_options::value<string>(&check_orphan), "align orphan reads (true/false; default false)")
       ("num_threads", boost::program_options::value<int>(&num_threads)->default_value(1), "maximum number of threads to be used")
-      ("verbose", boost::program_options::value<string>(&verbose), "print intermediate information (default true)")
+      ("verbose", boost::program_options::value<string>(&verbose), "print intermediate information (true/false; default true)")
   ;
   boost::program_options::positional_options_description pos_opt;
   pos_opt.add("query", 1);
@@ -144,8 +144,15 @@ int main(int argc, char** argv)  {
   if(verbose == "False" || verbose == "false" || verbose == "No" || verbose == "no" || verbose == "0")  {
     is_verbose = false;
   }
+
+  bool is_include_orphan = false;
+  if(check_orphan == "True" || check_orphan == "true" || check_orphan == "Yes" || check_orphan == "yes" || check_orphan == "1")  {
+    is_include_orphan = true;
+  } 
   
   // Define basic alphabet and scoring function
+  ReducedAlphabet *reduced_alphabet = new ReducedAlphabet((enum Alphabet) 10);
+  GappedPattern *gap_pattern = new GappedPattern;
   BioAlphabet *protein_alphabet = new BioAlphabet(PROT);
   ScoringProt *scoring_function = new ScoringProt(
       static_cast<enum MatrixName>(scoring_matrix), gap_open, gap_extend
@@ -173,17 +180,17 @@ int main(int argc, char** argv)  {
   vector<string> orphan_seq;
   // ".UTG" stands for UniTiG
   string idx_unitig_file = workspace_dir + "/" + db_stem + ".utg";  
-  // ".RDM" stands for ReDuced Map
-  string idx_kmer_file = workspace_dir + "/" + db_stem + ".kmp";  
-  // ".KBF" stands for Kmer Bloom Filter  
-  string idx_neighbor_file = workspace_dir + "/" + db_stem + ".knb";
+ 
+  
   // Loading the unitig index file and extract the edge sequences
   strG.LoadGraph(idx_unitig_file, orphan_id, orphan_seq); 
   vector<string> *unitigs = new vector<string>; 
   int num_unitigs = strG.RecordEdgeSeqs(*unitigs);
   // include the single sequences into the indexing step
-  for(int i = 0; i < orphan_seq.size(); ++ i) {
-    unitigs->push_back(orphan_seq[i]);
+  if(is_include_orphan)  {
+    for(int i = 0; i < orphan_seq.size(); ++ i) {
+      unitigs->push_back(orphan_seq[i]);
+    }
   }
   vector<BoostSTREdge> graph_edge;
   strG.ComputeGraphEdgeMapping(graph_edge);
@@ -192,9 +199,32 @@ int main(int argc, char** argv)  {
   for(auto it = unitigs->begin(); it != unitigs->end(); ++ it) db_size += it->length();
   // Constructing the k-mer hashing table
   SequenceSearch seq_search;
-  //seq_search.LoadKmerPosition(protein_alphabet, idx_kmer_file, mer_len, kmer_pos);
   vector<vector<int> > *kmer_neighbor = new vector<vector<int> >;
+  string idx_neighbor_file = workspace_dir + "/" + db_stem + ".knb";
   seq_search.LoadKmerNeighbor(*protein_alphabet, idx_neighbor_file, mer_len, *kmer_neighbor);
+  /*
+  string idx_kmer_file = workspace_dir + "/" + db_stem + ".kmp";  
+  vector<KmerUnitType> *kmer_index = new vector<KmerUnitType>;
+  vector<vector<int> > *kmer_position = new vector<vector<int> >;  
+  seq_search.LoadKmerPosition(idx_kmer_file, *kmer_index, *kmer_position);
+  */
+  
+  // precompute the index for the sequences
+  vector<vector<MerIntType> > *kmer_encoded = new vector<vector<MerIntType> >;
+  kmer_encoded->resize(unitigs->size());
+  KmerUnitcoder coder(*protein_alphabet, mer_len); 
+  MerIntType mer_id;
+  for(int i = 0; i < unitigs->size(); ++ i) {
+    char *t_seq = new char [(*unitigs)[i].length() + 1];
+    strcpy(t_seq, (*unitigs)[i].c_str());
+    (*kmer_encoded)[i].resize((*unitigs)[i].length() - mer_len + 1);
+    for(int j = 0; j <= (*unitigs)[i].length() - mer_len; ++ j) {
+      if(j == 0) mer_id = (MerIntType) coder.EncodeInt(t_seq);
+      else mer_id = (MerIntType) coder.EncodeIntRight(mer_id, t_seq[j + mer_len - 1]);
+      (*kmer_encoded)[i][j] = mer_id;
+    }
+    delete [] t_seq;
+  }
 
   //***************************
   if(is_verbose)  {
@@ -210,7 +240,7 @@ int main(int argc, char** argv)  {
   int **t_ID = new int* [num_queries]; 
   
   int q_id;
-  #pragma omp parallel num_threads(num_threads) private(q_id) shared(protein_alphabet, scoring_function, unitigs, kmer_neighbor, q_interval, t_interval, mx_score, t_ID)
+  #pragma omp parallel num_threads(num_threads) private(q_id) shared(protein_alphabet, scoring_function, unitigs, kmer_neighbor, kmer_encoded, q_interval, t_interval, mx_score, t_ID)
   {
     #pragma omp for
     for(q_id = 0; q_id < num_queries; ++ q_id) {
@@ -224,6 +254,9 @@ int main(int argc, char** argv)  {
       int screen_cutoff = scoring_function->ComputeCutoff(
           current_query.length(), db_size, e_value * 1000
       );
+      int refine_cutoff = scoring_function->ComputeCutoff(
+          current_query.length(), db_size, e_value * 100
+      );
       int final_cutoff = scoring_function->ComputeCutoff(
           current_query.length(), db_size, e_value
       );
@@ -234,11 +267,21 @@ int main(int argc, char** argv)  {
       mx_score[q_id] = new int [unitigs->size()];
       t_ID[q_id] = new int [unitigs->size()];
       
+
       int num_filtered = seq_search.SelectID(
           *protein_alphabet, mer_len, screen_cutoff, current_query, 
-          *unitigs, *scoring_function, *kmer_neighbor, 
+          *unitigs, *scoring_function, *kmer_neighbor, *kmer_encoded,
           q_interval[q_id], t_interval[q_id], mx_score[q_id], t_ID[q_id]
       );
+      
+  
+      /*
+      int num_filtered = seq_search.SelectID(
+          *reduced_alphabet, mer_len, 22, screen_cutoff, current_query, 
+          *unitigs, *scoring_function, *kmer_index, *kmer_position, 
+          q_interval[q_id], t_interval[q_id], mx_score[q_id], t_ID[q_id]
+      );
+      */
       
       #pragma omp critical
       {   
@@ -257,9 +300,16 @@ int main(int argc, char** argv)  {
       strG.GetHighScoringPaths(
           screen_cutoff, current_query.length(), *
           unitigs, graph_edge, 
-          num_filtered, t_ID[q_id], mx_score[q_id], q_interval[q_id], 
+          num_filtered, t_ID[q_id], mx_score[q_id], 
+          q_interval[q_id], t_interval[q_id],
           0.95, high_score_seqs
       );
+
+      //cout << "high score sequences:  " << endl;
+      //for(int i = 0; i < high_score_seqs.size(); ++ i) {
+      //  cout << ">seq" << endl << high_score_seqs[i] << endl; 
+      //}
+
       #pragma omp critical
       { 
         delete [] q_interval[q_id];
@@ -278,30 +328,37 @@ int main(int argc, char** argv)  {
       }
       //***************************
       
-      // Re-aligning the paths with the query     
-      vector<int> score(high_score_seqs.size(), 0);
+      // Re-aligning the paths with the query 
+      list<ContigType> contigs;
+      ContigRefinement recalibrator;    
       for(int i = 0; i < high_score_seqs.size(); ++ i) {
+                
         int b = band_size + 
             2 * abs((int) current_query.length() - 
                     (int) high_score_seqs[i].length()
             );
-        score[i] = aligner->AlignLocalPairwise(
+        int score = aligner->AlignLocalPairwise(
             current_query, high_score_seqs[i], 
             b, *scoring_function
         );
+        
+        //if(score >= refine_cutoff)  {
+        ContigType c = recalibrator.MakeContigType(
+          high_score_seqs[i], score,
+          scoring_function->ComputeBitScore(score),
+          scoring_function->ComputeEValue(
+              current_query.length(), db_size, score
+          )
+        );
+        contigs.push_back(c);            
+        //}
       }
       
-      vector<string> out_seqs;
-      for(int i = 0; i < score.size(); ++ i) {
-        if(score[i] >= final_cutoff) 
-          out_seqs.push_back(high_score_seqs[i]);
-      }
-      
-      vector<FullAlnType> aln_info;
-      aligner->MultiAlignLocalFull(
-          1, current_query, out_seqs.size(), out_seqs, 
-          *scoring_function, aln_info
-      );
+      //vector<FullAlnType> aln_info;
+      //aligner->MultiAlignLocalFull(
+      //    1, current_query, out_seqs.size(), out_seqs, 
+      //    *scoring_function, aln_info
+      //);
 
       //***************************
       #pragma omp critical
@@ -314,9 +371,42 @@ int main(int argc, char** argv)  {
         }
       }
       //***************************
+      // refine contigs
+
+      list<ContigType> refined_contigs;
+      recalibrator.RefineContigs(
+          current_query, db_size, *scoring_function, band_size,
+          refine_cutoff, e_value, 10, contigs, refined_contigs
+      );
+      #pragma omp critical
+      {
+        if(is_verbose)  {
+          check_time_p = MyTime();
+          cout << "GRASP2-Assemble::" << query_tags[q_id] << ": Contig recalibration done.";
+          PrintElapsed(start_time_p, check_time_p, "");
+          start_time_p = MyTime();
+        }
+      }
+      
+
       // Write assembled contigs
       #pragma omp critical
-      {        
+      { 
+        
+        int idx = 0;
+        for(auto it = refined_contigs.begin(); it != refined_contigs.end(); ++ it) {
+          stringstream outs;
+          ++ idx;
+          outs << query_tags[q_id] << "||contig_" << idx;
+          string barcode = outs.str();
+          int begin = it->q_begin;
+          int end = it->q_end;
+          out_fh << ">" << barcode;
+          out_fh << "||" << it->e_value << "||" << it->bit_score << "||" << it->score << endl;
+          out_fh << it->sequence << endl;
+        } 
+              
+        /*       
         for(int idx = 0; idx < aln_info.size(); ++ idx) {
           if(aln_info[idx].score < final_cutoff) continue;
           stringstream outs;
@@ -332,6 +422,7 @@ int main(int argc, char** argv)  {
           out_fh << "||" << aln_info[idx].score << endl;
           out_fh << aln_info[idx].sequences.second.substr(begin, end - begin + 1) << endl;
         }
+        */
       }
       //***************************
       #pragma omp critical

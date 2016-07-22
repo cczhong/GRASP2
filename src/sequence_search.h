@@ -25,7 +25,8 @@
 #include "reduced_alphabet.h"
 #include "gapped_pattern.h"
 
-typedef uint64_t UInt64;
+typedef long long int LLInt;
+typedef short int MerIntType;
 
 struct AlignIntervalType  {
   // q1, q2 are locations in the query sequence
@@ -34,8 +35,6 @@ struct AlignIntervalType  {
   // score is the goodness of the alignment
   int score;
 };
-
-
 
 class SequenceSearch  {
  public:
@@ -84,14 +83,28 @@ class SequenceSearch  {
   void LoadKmerFilter(const std::string &file, std::vector<KmerFiltering> &bm_filters);  
   //************************  
   void IndexKmerPosition(
-      ReducedAlphabet &reduced, GappedPattern &pattern, 
-      int num_seqs, char **seqs, const std::string &out_file
+      ReducedAlphabet &reduced, GappedPattern &pattern, const int pid,
+      std::vector<std::string> &seqs, const std::string &out_file
   );
+  void IndexKmerPosition(
+      ReducedAlphabet &reduced, const int mer_len,  
+      std::vector<std::string> &seqs, const std::string &out_file
+  );
+  void IndexKmerPosition(
+      BioAlphabet &alphabet, const int mer_len,  
+      std::string &concat_seq, const std::string &out_file
+  );
+
   void LoadKmerPosition(
-      BioAlphabet &alphabet, const std::string &in_file,
-      const int mer_len, std::vector<std::vector<int> >& kmer_pos
+      const std::string &in_file,
+      std::vector<KmerUnitType> &index, std::vector<std::vector<int> >& kmer_pos
   ); 
   //************************  
+  void ComputeKmerNeighbor(      
+      const int mer_len, BioAlphabet &alpha, 
+      ScoringProt &fs, const int neighbor_score,
+      std::vector<std::vector<int> > &kmer_neighbor
+  );
   void IndexKmerNeighbor(
       const int mer_len, BioAlphabet &alpha, 
       ScoringProt &fs, const int neighbor_score,
@@ -130,25 +143,40 @@ class SequenceSearch  {
   // is considered as high-scoring; resulting high-score read IDs are stored in selected_IDs
   // the key of "selected_ID" is the edge sequence ID; the value is a list of seed pairs;
   // where the first value is the kmer and the second value is the location in the query sequence
-  void SelectID(
-      BioAlphabet &alphabet, const int mer_len, 
+
+  /*
+  int SelectID(
+      ReducedAlphabet &reduced, const int mer_len, const int cutoff_score,
       const int screen_score, std::string &query, 
       std::vector<std::string> &seqs, ScoringProt &fs,
-      std::vector<std::vector<int> >& kmer_neighbor,
-      std::vector<std::pair <int, int> > &q_interval, 
-      std::vector<std::pair <int, int> > &t_interval,
-      std::vector<int> &mx_score, std::vector<int> &t_ID
+      std::vector<KmerUnitType> &index, std::vector<std::vector<int> > &kmer_pos,
+      int *q_interval, int *t_interval,
+      int *mx_score, int *t_ID
   );
-  
+  */
+
+  /*
+  int SelectID(
+      ReducedAlphabet &reduced, GappedPattern &pattern, const int pid,
+      const int screen_score, std::string &query, 
+      std::vector<std::string> &seqs, ScoringProt &fs,
+      std::vector<KmerUnitType> &index, std::vector<std::vector<int> > &kmer_pos,
+      int *q_interval, int *t_interval,
+      int *mx_score, int *t_ID
+  );
+  */
+
   int SelectID(
       BioAlphabet &alphabet, const int mer_len, 
       const int screen_score, std::string &query, 
       std::vector<std::string> &seqs, ScoringProt &fs,
       std::vector<std::vector<int> >& kmer_neighbor,
+      std::vector<std::vector<MerIntType> >& kmer_encoded,
       int *q_interval, int *t_interval,
       int *mx_score, int *t_ID
   );
   
+  /*
   void SelectID(
       const int mer_len, BioAlphabet &alpha, ReducedAlphabet &re_alpha, 
       std::string &query, std::vector<std::string> &seqs,
@@ -156,7 +184,7 @@ class SequenceSearch  {
       std::vector<KmerFiltering> &bm_filters, double scale, ScoringProt &fs, 
       std::vector<std::vector<int> > &seed_positions
   );
-  
+  */
   // given the "query" and "target" sequences, and their kmer (with length "mer_len")
   // matching locations, find the interval in the query ("q_interval") 
   // and the interval in the target ("t_interval") where sequence should be extracted

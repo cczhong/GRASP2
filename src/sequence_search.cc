@@ -201,19 +201,25 @@ void SequenceSearch::LoadKmerFilter(
 }
 
 void SequenceSearch::IndexKmerPosition(
-    ReducedAlphabet &reduced, GappedPattern &pattern, 
-    int num_seqs, char **seqs, const std::string &out_file
+    ReducedAlphabet &reduced, GappedPattern &pattern, const int pid,  
+    std::vector<std::string> &seqs, const std::string &out_file
 ) {
 
   BioAlphabet alphabet(reduced);
   int i, j;
+  int pattern_len = pattern.GetPatternLen(pid);
   int pattern_weight = pattern.GetPatternWeight();
-  map<UInt64, vector<int> > mer_pos;
+  if(pattern_len <= 0)  {
+    cout << "Error: SequenceSearch::IndexKmerPosition: gapped seed pattern has not been initialized or index out of bound!!! Abort." << endl;
+    exit(1);
+  }
+  map<KmerUnitType, vector<int> > mer_pos;
   KmerUnitcoder coder(alphabet, pattern_weight);
-  UInt64 max_id = 0;
-  for(i = 0; i < num_seqs; ++ i) {
-    for(j = 0; j <= strlen(seqs[i]) - pattern_weight; ++ j) {
-      UInt64 mer_id = (UInt64) coder.EncodeInt(&seqs[i][j]);
+  KmerUnitType max_id = 0;
+  for(i = 0; i < seqs.size(); ++ i) {
+    for(j = 0; j <= seqs[i].length() - pattern_len; ++ j) {
+      string ugs = pattern.GetUngappedStr(pid, seqs[i], j);
+      KmerUnitType mer_id = coder.EncodeInt(ugs.c_str());
       mer_pos[mer_id].push_back(i); mer_pos[mer_id].push_back(j); 
       if(mer_id > max_id) max_id = mer_id;
     }
@@ -222,7 +228,7 @@ void SequenceSearch::IndexKmerPosition(
   out_fh.open(out_file, ios::out);
   // writing the kmer-readID associations
   for(auto it = mer_pos.begin(); it != mer_pos.end(); ++ it) {
-    out_fh << it->first << ":";
+    out_fh << (KmerUnitType) it->first << ":";
     for(auto itj = it->second.begin(); itj < it->second.end(); ++ itj) {
       out_fh << *itj << ":";
     }
@@ -233,9 +239,77 @@ void SequenceSearch::IndexKmerPosition(
   return;
 }
 
+void SequenceSearch::IndexKmerPosition(
+    ReducedAlphabet &reduced, const int mer_len,  
+    std::vector<std::string> &seqs, const std::string &out_file
+) {
+
+  BioAlphabet alphabet(reduced);
+  int i, j;    
+  map<KmerUnitType, vector<int> > mer_pos;
+  KmerUnitcoder coder(alphabet, mer_len);
+  KmerUnitType mer_id;
+  KmerUnitType max_id = 0;
+  for(i = 0; i < seqs.size(); ++ i) {
+    for(j = 0; j <= seqs[i].length() - mer_len; ++ j) {
+      if(j == 0) mer_id = coder.EncodeInt(seqs[i].substr(j, mer_len).c_str());
+      else mer_id = coder.EncodeIntRight(mer_id, seqs[i][j + mer_len - 1]);
+      mer_pos[mer_id].push_back(i); mer_pos[mer_id].push_back(j); 
+      if(mer_id > max_id) max_id = mer_id;
+    }
+  }
+  ofstream out_fh;
+  out_fh.open(out_file, ios::out);
+  // writing the kmer-readID associations
+  for(auto it = mer_pos.begin(); it != mer_pos.end(); ++ it) {
+    out_fh << (KmerUnitType) it->first << ":";
+    for(auto itj = it->second.begin(); itj < it->second.end(); ++ itj) {
+      out_fh << *itj << ":";
+    }
+    out_fh << endl; 
+  }
+  out_fh.close();
+  return;
+}
+
+void SequenceSearch::IndexKmerPosition(
+    BioAlphabet &alphabet, const int mer_len,  
+    std::string &concat_seq, const std::string &out_file
+) {
+  LLInt size_bound = 65536;
+  bool success = false;
+  int mer_id;
+  KmerUnitcoder coder(alphabet, mer_len);
+  vector<vector<LLInt> > mer_pos; mer_pos.resize(size_bound);
+  for(LLInt i = 0; i <= concat_seq.length() - mer_len; ++ i) {
+    if(!success)  mer_id = coder.EncodeInt(concat_seq.substr(i, mer_len).c_str());
+    else mer_id = coder.EncodeIntRight(mer_id, concat_seq[i + mer_len - 1]);
+    if(mer_id >= 0)  {
+      success = true;
+      mer_pos[mer_id].push_back(i);
+    } else  {
+      success = false;
+    }
+  }
+  // output the index
+  ofstream out_fh;
+  out_fh.open(out_file, ios::out);
+  for(int i = 0; i < mer_pos.size(); ++ i) {
+    if(mer_pos[i].size() > 0)  {
+      out_fh << i << ":";
+      for(int j = 0; j < mer_pos[i].size(); ++ j) {
+        out_fh << (long long int) mer_pos[i][j] << ":";
+      }
+      out_fh << endl; 
+    }
+  }
+  out_fh.close();
+  return;
+}
+
 void SequenceSearch::LoadKmerPosition(
-    BioAlphabet &alphabet, const std::string &in_file,
-    const int mer_len, std::vector<std::vector<int> >& kmer_pos
+    const std::string &in_file,
+    std::vector<KmerUnitType> &index, std::vector<std::vector<int> >& kmer_pos
 ) {
   int i, j;
   string line;
@@ -245,13 +319,6 @@ void SequenceSearch::LoadKmerPosition(
     cout << "SequenceSearch::LoadKmerPosition: Error in loading kmer position indexing file: " << in_file << "; Abort." << endl;
     exit(1);
   }
-  if(mer_len > 6) {
-    cout << "SequenceSearch::LoadKmerPosition: kmer size too large (must be less or equal to 6). Abort." << endl;
-    exit(1);
-  }
-  int max_id = pow(alphabet.GetSize(), mer_len) + 1;
-  kmer_pos.resize(max_id + 1);
-  KmerUnitcoder coder(alphabet, mer_len);
   // loading the files line by line
   while(getline(in_fh, line))  {
     // extract the information
@@ -260,14 +327,61 @@ void SequenceSearch::LoadKmerPosition(
     for(i = 0; i < line.length(); ++ i) {
       if(line[i] == ':') range.push_back(i);
     }
-    int key_id = stoi(line.substr(range[0], range[1] - range[0]));
+    index.push_back((KmerUnitType) stoul(line.substr(range[0], range[1] - range[0])));
+    vector<int> pos;
     for(i = 1; i < range.size() - 1; ++ i) {
-      kmer_pos[key_id].push_back(stoi(line.substr(range[i] + 1, range[i + 1] - range[i] - 1)));
+      pos.push_back(stoi(line.substr(range[i] + 1, range[i + 1] - range[i] - 1)));
     }
+    kmer_pos.push_back(pos);
   }
   in_fh.close();
   return;
 } 
+
+void SequenceSearch::ComputeKmerNeighbor(      
+    const int mer_len, BioAlphabet &alpha, 
+    ScoringProt &fs, const int neighbor_score,
+    vector<vector<int> > &kmer_neighbor
+) {
+  int i, j;
+  vector<char> all_char;
+  for(i = 0; i < alpha.GetSize(); ++ i) {
+    all_char.push_back(alpha.GetInvCharMap(i));
+  }
+  KmerUnitcoder coder(alpha, mer_len);
+  // computing all kmers
+  vector<string> mer_enum;
+  vector<int> mer_id;
+  vector<int> cutoff_score;
+  mer_enum.resize((int) pow(alpha.GetSize(), mer_len));
+  mer_id.resize(mer_enum.size());
+  for(i = 0; i < (int) mer_enum.size(); ++ i) {
+    string mer(mer_len, ' ');
+    int num = i;
+    //cout << "num: " << num << endl;
+    for(int p = mer_len - 1; p >= 0; -- p) {
+      int d = pow(alpha.GetSize(), p);
+      int q = (int) (num / d);
+      mer[mer_len - p - 1] = all_char[q];
+      //cout << " pow, quotion, char:  " << d << " " << q << "  " << alphabet[q] << endl;
+      num = num - q * d; 
+    }
+    mer_enum[i] = mer;
+    mer_id[i] = coder.EncodeInt(mer.c_str());
+  }  
+  // computing all kmer neighbors
+  kmer_neighbor.resize(mer_enum.size());
+  for(i = 0; i < mer_enum.size(); ++ i) {
+    kmer_neighbor[mer_id[i]].push_back(mer_id[i]);
+    for(j = i + 1; j < mer_enum.size(); ++ j) {
+      if(fs.ComputeMatchingScore(mer_enum[i], mer_enum[j]) >= neighbor_score)  {
+        kmer_neighbor[mer_id[i]].push_back(mer_id[j]);
+        kmer_neighbor[mer_id[j]].push_back(mer_id[i]);
+      }
+    }
+  }
+  return;
+}
 
 void SequenceSearch::IndexKmerNeighbor(
     const int mer_len, BioAlphabet &alpha, 
@@ -557,90 +671,179 @@ bool SortAlignInterval(const AlignIntervalType &i1, const AlignIntervalType &i2)
   return false;
 }
 
-void SequenceSearch::SelectID(
-    BioAlphabet &alphabet, const int mer_len, 
+/*
+int SequenceSearch::SelectID(
+    ReducedAlphabet &reduced, const int mer_len, const int cutoff_score,
     const int screen_score, std::string &query, 
     std::vector<std::string> &seqs, ScoringProt &fs,
-    std::vector<std::vector<int> >& kmer_neighbor,
-    std::vector<std::pair <int, int> > &q_interval, 
-    std::vector<std::pair <int, int> > &t_interval,
-    std::vector<int> &mx_score, std::vector<int> &t_ID
+    std::vector<KmerUnitType> &index, std::vector<std::vector<int> > &kmer_pos,
+    int *q_interval, int *t_interval,
+    int *mx_score, int *t_ID
 ) {
-  // compute high-score matches for each kmer in the group with the same reduce alphabet string
-  int i, j, k, l;
-  int max_id = pow(alphabet.GetSize(), mer_len) + 1;
-  KmerUnitcoder coder(alphabet, mer_len); 
-  int mer_id; 
-  
-  int max_len = 0;
-  for(i = 0; i < seqs.size(); ++ i) {
-    max_len = max_len > seqs[i].length() ? max_len : seqs[i].length();
-  }
-  
-  vector<vector <int> > mer_q_loc;
-  mer_q_loc.resize(max_id);
-  for(i = 0; i <= query.length() - mer_len; ++ i) {
-    if(i == 0)  mer_id = coder.EncodeInt(query.substr(0, mer_len).c_str());
-    else  mer_id = coder.EncodeIntRight(mer_id, query[i + mer_len - 1]);
-    for(j = 0; j < kmer_neighbor[mer_id].size(); ++ j) {
-      mer_q_loc[kmer_neighbor[mer_id][j]].push_back(i);
+  BioAlphabet alphabet(reduced);
+  KmerUnitcoder coder(alphabet, mer_len);
+  map<KmerUnitType, vector<int> > q_index;
+  // index the query
+  KmerUnitType mer_id;
+  for(int i = 0; i <= query.length() - mer_len; ++ i) {
+    if(i == 0) mer_id = coder.EncodeInt(query.substr(i, mer_len).c_str());
+    else mer_id = coder.EncodeIntRight(mer_id, query[i + mer_len - 1]);
+    q_index[mer_id].push_back(i);
+  } 
+  // compute the score for the matching
+  vector<vector<int> > match_kmer;  // the first index is the target sequence ID, the second index are query position followed by target position
+  match_kmer.resize(seqs.size());
+  for(int i = 0; i < index.size(); ++ i) {
+    // looping over all kmer indexes
+    if(q_index.find(index[i]) == q_index.end()) continue;
+    for(int j = 0; j < kmer_pos[i].size(); j += 2) {      
+      // looping over all target positions
+      for(auto itp = q_index[index[i]].begin(); itp != q_index[index[i]].end(); ++ itp) {
+        // looping over all query positions
+        int m_score = fs.ComputeMatchingScore(seqs[kmer_pos[i][j]], kmer_pos[i][j + 1], query, *itp, mer_len);
+        if(m_score >= cutoff_score) {
+          match_kmer[kmer_pos[i][j]].push_back(*itp); 
+          match_kmer[kmer_pos[i][j]].push_back(kmer_pos[i][j + 1]);
+        }
+      } 
     }
   }
   
-  int asize = 2 * (query.length() + max_len), abit = asize * sizeof(int);
-  int *diff_array = new int [asize];
-  for(i = 0; i < seqs.size(); ++ i) {
-    //diff_array = vector<int>(2 * (query.length() + max_len), -1);
-    memset(diff_array, -1, abit);
-    int mx_hsp_score = 0;
-    int mx_q1, mx_q2, mx_t1, mx_t2;
-    for(j = 0; j <= seqs[i].length() - mer_len; ++ j) {
-      if(j == 0) mer_id = coder.EncodeInt(seqs[i].substr(0, mer_len).c_str());
-      else mer_id = coder.EncodeIntRight(mer_id, seqs[i][j + mer_len - 1]);
-      for(k = 0; k < mer_q_loc[mer_id].size(); ++ k) {
-      
-        int diff = j - mer_q_loc[mer_id][k] + query.length();
-        int idx = diff * 2;
-        if(diff_array[idx] == -1)  {
-          diff_array[idx] = mer_q_loc[mer_id][k]; diff_array[idx + 1] = j;
-        } else {
-          if(mer_q_loc[mer_id][k] - diff_array[idx] == j - diff_array[idx + 1] && 
-             j - diff_array[idx + 1] > mer_len) {
-            
-            int q1l = diff_array[idx], q2r = mer_q_loc[mer_id][k] + mer_len - 1;
-            int t1l = diff_array[idx + 1], t2r = j + mer_len - 1;            
-            int hsp_score = fs.ComputeMatchingScoreExtend(
-                query, seqs[i], 25, q1l, q2r, t1l, t2r
-            );           
-            if(hsp_score >= mx_hsp_score) {
-              mx_hsp_score = hsp_score;
-              mx_q1 = q1l; mx_q2 = q2r; 
-              mx_t1 = t1l; mx_t2 = t2r;  
-            }
-            // update the array
-            diff_array[idx] = mer_q_loc[mer_id][k]; diff_array[idx + 1] = j;
-          }
-        }
+  // remove redundancy and get the final hsp to further align
+  int num_cand = 0;
+  for(int i = 0; i < match_kmer.size(); ++ i) {
+    int mx_hsp_score = 0; int mx_q1, mx_q2, mx_t1, mx_t2;
+    for(int j = 0; j < match_kmer[i].size(); j += 2) {
+      int qrb = match_kmer[i][j] + mer_len - 1;
+      int trb = match_kmer[i][j + 1] + mer_len - 1;
+      int hsp_score = fs.ComputeMatchingScoreExtend(
+        query, seqs[i], 25, match_kmer[i][j], qrb, match_kmer[i][j + 1], trb
+      );
+      if(hsp_score > mx_hsp_score)  {
+        mx_hsp_score = hsp_score;
+        mx_q1 = match_kmer[i][j]; mx_q2 = qrb;
+        mx_t1 = match_kmer[i][j + 1]; mx_t2 = trb;
       }
     }
     if(mx_hsp_score >= screen_score)  {
-      mx_score.push_back(mx_hsp_score);
-      t_ID.push_back(i);
-      q_interval.push_back(make_pair(mx_q1, mx_q2));
-      t_interval.push_back(make_pair(mx_t1, mx_t2));
-      //cout << "score: " << mx_hsp_score << " ~ ID: " << i << "  " << mx_q1 << "  " << mx_q2 << " " << mx_t1 << " " << mx_t2 << endl;
+      mx_score[num_cand] = mx_hsp_score;
+      t_ID[num_cand] = i;
+      q_interval[2 * num_cand] = mx_q1;
+      q_interval[2 * num_cand + 1] = mx_q2;
+      t_interval[2 * num_cand] = mx_t1;
+      t_interval[2 * num_cand + 1] = mx_t2;
+      ++ num_cand;
     }
   }
-  delete [] diff_array;
-  return;
+  return num_cand;
 }
+*/
 
+/*
+int SequenceSearch::SelectID(
+    ReducedAlphabet &reduced, GappedPattern &pattern, const int pid,
+    const int screen_score, std::string &query, 
+    std::vector<std::string> &seqs, ScoringProt &fs,
+    std::vector<KmerUnitType> &index, std::vector<std::vector<int> > &kmer_pos,
+    int *q_interval, int *t_interval,
+    int *mx_score, int *t_ID
+) {
+  // compute high-score matches for each kmer in the group with the same reduce alphabet string
+  int i, j, k, l;
+  BioAlphabet alphabet(reduced);
+  int pattern_len = pattern.GetPatternLen(pid);
+  int pattern_weight = pattern.GetPatternWeight();
+  KmerUnitcoder coder(alphabet, pattern_weight); 
+  // identify the all kmers in the query
+  vector<KmerUnitType> q_index; vector<vector<int> > q_pos;
+  map<KmerUnitType, vector<int> > mer_table; 
+  for(i = 0; i <= query.length() - pattern_len; ++ i) {
+    string ugs = pattern.GetUngappedStr(pid, query, i);
+    KmerUnitType mer_id = coder.EncodeInt(ugs.c_str());
+    mer_table[mer_id].push_back(i);
+  } 
+  for(auto it = mer_table.begin(); it != mer_table.end(); ++ it)  {
+    q_index.push_back(it->first); q_pos.push_back(it->second);
+  } 
+
+  //cout << "Done indexing query sequence" << endl;
+
+  // match the kmers between database and query
+  vector<vector<int> > match_kmer; match_kmer.resize(seqs.size());
+  for(KmerUnitType idq = 0, idt = 0; idq < q_index.size() && idt < index.size();) {
+    if(q_index[idq] == index[idt])  {
+      for(k = 0; k < q_pos[idq].size(); ++ k) {
+        for(l = 0; l < kmer_pos[idt].size(); l += 2) {
+          // note that kmer_pos contains both target ID and the position in the target
+          match_kmer[kmer_pos[idt][l]].push_back(q_pos[idq][k]);  // this is the position in the query
+          match_kmer[kmer_pos[idt][l]].push_back(kmer_pos[idt][l + 1]); // this is the position in the target          
+        }
+      }
+      ++ idq; ++ idt;
+    } 
+    else if(q_index[idq] < index[idt]) ++ idq;
+    else if(q_index[idq] > index[idt]) ++ idt; 
+    //cout << q_index[idq] << " " << index[idt] << "  " << idq << "  " << idt << "  " << q_index.size() << "  " << index.size() << endl;
+  }
+
+  //cout << "Done matching query and database sequences" << endl;
+
+  int num_cand = 0;
+  // remove redundancy of the seed matches
+  for(i = 0; i < match_kmer.size(); ++ i) {
+    if(match_kmer[i].size() <= 0) continue;
+    // i is the index of the sequence ID 
+    int mx_hsp_score = 0;
+    int mx_q1, mx_q2, mx_t1, mx_t2;
+    // j and k are the indexes for pairwise comparison of positions
+    for(j = 0; j < match_kmer[i].size() - 2; j += 2) {
+      if(match_kmer[i][j] < 0)  continue;
+      // query right bound and target right bound
+      int qrb = match_kmer[i][j] + pattern_len - 1; 
+      int trb = match_kmer[i][j + 1] + pattern_len - 1; 
+      //cout << "???  " << query.length() << "  " << seqs[i].length() << endl;      
+      for(k = j + 2; k < match_kmer[i].size(); k += 2) {
+        if(match_kmer[i][k] < qrb && match_kmer[i][k] - match_kmer[i][j] == match_kmer[i][k + 1] - match_kmer[i][j + 1])  {
+          // merge condition dectected
+          qrb = match_kmer[i][k] + pattern_len - 1; trb = match_kmer[i][k + 1] + pattern_len - 1;
+          // mark the kth seed as used
+          match_kmer[i][k] = match_kmer[i][k + 1] = -1; 
+        }
+      }
+      // check matching score and record information         
+      //cout << match_kmer[i][j] << " " << qrb << " " << match_kmer[i][j + 1] << "  " << trb << endl;
+      int hsp_score = fs.ComputeMatchingScoreExtend(
+          query, seqs[i], 25, match_kmer[i][j], qrb, match_kmer[i][j + 1], trb
+      );           
+      //cout << hsp_score << "  " << mx_hsp_score << endl;
+      if(hsp_score >= mx_hsp_score) {
+        mx_hsp_score = hsp_score;
+        mx_q1 = match_kmer[i][j]; mx_q2 = qrb;
+        mx_t1 = match_kmer[i][j + 1]; mx_t2 = trb;
+      } 
+    }
+    // record the candidate
+    if(mx_hsp_score >= screen_score) {
+      mx_score[num_cand] = mx_hsp_score;
+      t_ID[num_cand] = i;
+      q_interval[2 * num_cand] = mx_q1;
+      q_interval[2 * num_cand + 1] = mx_q2;
+      t_interval[2 * num_cand] = mx_t1;
+      t_interval[2 * num_cand + 1] = mx_t2;
+      ++ num_cand;
+    }
+  } 
+  //cout << "Done selecting ID: " << num_cand << endl;
+  return num_cand;
+}
+*/
 
 int SequenceSearch::SelectID(
     BioAlphabet &alphabet, const int mer_len, 
     const int screen_score, std::string &query, 
     std::vector<std::string> &seqs, ScoringProt &fs,
     std::vector<std::vector<int> >& kmer_neighbor,
+    std::vector<std::vector<MerIntType> >& kmer_encoded,
     int *q_interval, int *t_interval,
     int *mx_score, int *t_ID
 ) {
@@ -648,7 +851,7 @@ int SequenceSearch::SelectID(
   int i, j, k, l;
   int max_id = pow(alphabet.GetSize(), mer_len) + 1;
   KmerUnitcoder coder(alphabet, mer_len); 
-  int mer_id; 
+  MerIntType mer_id; 
   
   int max_len = 0;
   for(i = 0; i < seqs.size(); ++ i) {
@@ -658,35 +861,27 @@ int SequenceSearch::SelectID(
   vector<vector <int> > mer_q_loc;
   mer_q_loc.resize(max_id);
   for(i = 0; i <= query.length() - mer_len; ++ i) {
-    if(i == 0)  mer_id = coder.EncodeInt(query.substr(0, mer_len).c_str());
-    else  mer_id = coder.EncodeIntRight(mer_id, query[i + mer_len - 1]);
+    if(i == 0)  mer_id = (MerIntType) coder.EncodeInt(query.substr(0, mer_len).c_str());
+    else  mer_id = (MerIntType) coder.EncodeIntRight(mer_id, query[i + mer_len - 1]);
     for(j = 0; j < kmer_neighbor[mer_id].size(); ++ j) {
       mer_q_loc[kmer_neighbor[mer_id][j]].push_back(i);
     }
   }
   //cout << "Done using kmer-neighbor" << endl;
-  
+
   int num_cand = 0;
   int asize = 2 * (query.length() + max_len), abit = asize * sizeof(int);
   int *diff_array = new int [asize];
+  char *t_seq = new char [max_len + 1];
   for(i = 0; i < seqs.size(); ++ i) {
     //diff_array = vector<int>(2 * (query.length() + max_len), -1);
     memset(diff_array, -1, abit);
     int mx_hsp_score = 0;
-    int mx_q1, mx_q2, mx_t1, mx_t2;
-    char *t_seq = new char [seqs[i].length() + 1];
+    int mx_q1, mx_q2, mx_t1, mx_t2;   
     strcpy(t_seq, seqs[i].c_str());
     for(j = 0; j <= seqs[i].length() - mer_len; ++ j) {
-      
-      //if(j == 0) mer_id = coder.EncodeInt(seqs[i].substr(0, mer_len).c_str());
-      //else mer_id = coder.EncodeIntRight(mer_id, seqs[i][j + mer_len - 1]);
-      
-      if(j == 0) mer_id = coder.EncodeInt(t_seq);
-      else mer_id = coder.EncodeIntRight(mer_id, t_seq[j + mer_len - 1]);
-      
-      
-      for(k = 0; k < mer_q_loc[mer_id].size(); ++ k) {
-      
+      MerIntType mer_id = kmer_encoded[i][j];     
+      for(k = 0; k < mer_q_loc[mer_id].size(); ++ k) {     
         int diff = j - mer_q_loc[mer_id][k] + query.length();
         int idx = diff * 2;
         if(diff_array[idx] == -1)  {
@@ -697,9 +892,10 @@ int SequenceSearch::SelectID(
             
             int q1l = diff_array[idx], q2r = mer_q_loc[mer_id][k] + mer_len - 1;
             int t1l = diff_array[idx + 1], t2r = j + mer_len - 1;            
+            
             int hsp_score = fs.ComputeMatchingScoreExtend(
-                query, seqs[i], 25, q1l, q2r, t1l, t2r
-            );           
+                mer_len, query, seqs[i], 25, q1l, q2r, t1l, t2r
+            );
             if(hsp_score >= mx_hsp_score) {
               mx_hsp_score = hsp_score;
               mx_q1 = q1l; mx_q2 = q2r; 
@@ -712,7 +908,7 @@ int SequenceSearch::SelectID(
       }
       
     }
-    delete [] t_seq;
+    //cout << i << "  " << mx_hsp_score << "  " << screen_score << "  " << seqs[i] << endl;
     //cout << "Done filtering" << endl;
     if(mx_hsp_score >= screen_score)  {
       mx_score[num_cand] = mx_hsp_score;
@@ -725,11 +921,13 @@ int SequenceSearch::SelectID(
     }
     //cout << "Done writing information" << endl;
   }
+  delete [] t_seq;
   delete [] diff_array;
   
   return num_cand;
 }
 
+/*
 void SequenceSearch::SelectID(
     const int mer_len, BioAlphabet &alpha, ReducedAlphabet &re_alpha, 
     std::string &query, std::vector<std::string> &seqs,
@@ -783,7 +981,7 @@ void SequenceSearch::SelectID(
   delete [] taken_seqs;
   return;
 }
-
+*/
 
 void SequenceSearch::DefineChainingPreSet(
     const int band_size,
@@ -853,7 +1051,7 @@ void SequenceSearch::ExtendSeedToMatching(
   for(int i = 0; i < seed_matching.size(); ++ i) {
     if(!valid_matching[i]) continue;
     seed_matching[i].score = fs.ComputeMatchingScoreExtend(
-        query, target, 50, 
+        mer_len, query, target, 50, 
         seed_matching[i].q1, seed_matching[i].q2,
         seed_matching[i].t1, seed_matching[i].t2
     );
@@ -905,7 +1103,7 @@ void SequenceSearch::ExtendSeedToMatchingTwoHit(
   for(int i = 0; i < seed_matching.size(); ++ i) {
     if(!valid_matching[i]) continue;
     seed_matching[i].score = fs.ComputeMatchingScoreExtend(
-        query, target, 25, 
+        mer_len, query, target, 25, 
         seed_matching[i].q1, seed_matching[i].q2,
         seed_matching[i].t1, seed_matching[i].t2
     );

@@ -25,12 +25,11 @@ using namespace std;
 
 static string workspace_dir;
 static string db_file;
-static int alph_id = 10;
 static int extd_len;
 static int num_threads = 1;
+static int neighbor_score = 11;
 static string verbose;
 static int scoring_matrix = 0;
-
 static int mer_len = 3;
 
 void PrintUsage()  {
@@ -81,7 +80,7 @@ int main(int argc, char** argv)  {
       ("db_file", boost::program_options::value<string>(&db_file), "short-peptide reads (in FASTA format)")
       ("index", boost::program_options::value<string>(&workspace_dir)->default_value("index"), "working directory for indexing file dump")
       ("extension_len", boost::program_options::value<int>(&extd_len)->default_value(10), "minimum overlap length for path extension")
-      ("alphabet", boost::program_options::value<int>(&alph_id)->default_value(4), "reduced alphabet to be used for seeding\n  0:ALL20  1:DSSP5  2:DSSP10  3:GBMR4\n  4:GBMR10  5:HSDM5  6:SDM6  7:MURPHY5\n  8:MURPHY10  9:TD5  10:TD10")
+      ("neighbor_score", boost::program_options::value<int>(&neighbor_score)->default_value(11), "neighbor score for 3-mer seed matches") 
       ("num_threads", boost::program_options::value<int>(&num_threads)->default_value(1), "maximum number of threads to be used")
       ("verbose", boost::program_options::value<string>(&verbose), "print intermediate information (default true)")
   ;
@@ -116,11 +115,6 @@ int main(int argc, char** argv)  {
     cout << "Error: grasp-build: extension length out of range (allowed range: 6-20)." << endl;
     exit(0);
   }
-  if(alph_id < 0 || alph_id > 10)  {
-    cout << "Error: grasp-build: reduced alphabet not supported (supported alphabets: 0-10)." << endl;
-    cout << "Please use \'--help\' for more details." << endl;
-    exit(0);
-  }
   bool is_verbose = true;
   if(verbose == "False" || verbose == "false" || verbose == "No" || verbose == "no" || verbose == "0")  {
     is_verbose = false;
@@ -133,7 +127,7 @@ int main(int argc, char** argv)  {
   }
   
   BioAlphabet protein_alphabet(PROT);
-  ReducedAlphabet reduced_alphabet((enum Alphabet) alph_id);
+  ReducedAlphabet reduced_alphabet((enum Alphabet) 10);
   ScoringProt scoring_function(static_cast<enum MatrixName>(scoring_matrix), -10, -1); 
   
   // Load in the peptide sequences to be searched against
@@ -152,10 +146,9 @@ int main(int argc, char** argv)  {
     cout << "GRASP2-Build: Load peptide database done.";
     PrintElapsed(start_time, check_time, "");
   }
-  string db_stem = GetFileStem(db_file);
+  
   //***************************
   
-  /*
   // Construct Burrows-Wheeler Transformation
   start_time = MyTime();
   BWT bwt;
@@ -190,6 +183,13 @@ int main(int argc, char** argv)  {
   start_time = MyTime();
   strG.CheckGraph(); 
   while(strG.RemoveTipsBeforeCondense())  {;}
+  for(int i = 3; i < 10; i += 3) {
+    int num_removed_right = strG.RemoveBubbleRight(i);
+    while(strG.RemoveTipsBeforeCondense())  {;}
+    int num_removed_left = strG.RemoveBubbleLeft(i);
+    while(strG.RemoveTipsBeforeCondense())  {;}
+    //cout << "Num edges removed: " << num_removed_right << " " << num_removed_left << endl;
+  }
   strG.CondenseGraph(seqs);
   //***************************
   if(is_verbose)  {
@@ -200,6 +200,7 @@ int main(int argc, char** argv)  {
   //***************************
   // Write the string graph to hard dist
   start_time = MyTime();
+  string db_stem = GetFileStem(db_file);
   string idx_unitig_file = workspace_dir + "/" + db_stem + ".utg";  
   strG.WriteGraph(protein_alphabet, seqs, idx_unitig_file);
   strG.Purge();
@@ -214,14 +215,13 @@ int main(int argc, char** argv)  {
     cout << "GRASP2-Build: Write string graph unitigs done.";
     PrintElapsed(start_time, check_time, "");
   }
-  */
 
   //***************************
   // Constructing k-mer mapping information
   //start_time = MyTime();
   //StringGraph strLoad;
   //vector<int> orphan_id;
-  ////vector<string> orphan_seq;
+  //vector<string> orphan_seq;
   //strLoad.LoadGraph(idx_unitig_file, orphan_id, orphan_seq);
   //vector<string> unitigs;
   //strLoad.RecordEdgeSeqs(unitigs);
@@ -245,23 +245,40 @@ int main(int argc, char** argv)  {
   
   start_time = MyTime();
   SequenceSearch seq_search; 
-  string idx_neighbor_file = workspace_dir + "/" + db_stem + ".knb";
-  
-  //seq_search.IndexKmerNeighbor(
-  //    mer_len, protein_alphabet, scoring_function, 
-  //    11, idx_neighbor_file
-  //);
 
-  GappedPattern gap_pattern;
-  seq_search.IndexKmerPosition(
-    reduced_alphabet, gap_pattern, 
-    num_seqs, seqs, idx_neighbor_file
+  string idx_neighbor_file = workspace_dir + "/" + db_stem + ".knb"; 
+  seq_search.IndexKmerNeighbor(
+      mer_len, protein_alphabet, scoring_function, 
+      neighbor_score, idx_neighbor_file
   );
 
+  // Constructing k-mer mapping information
+
+  /*
+  StringGraph strLoad;
+  vector<int> orphan_id;
+  vector<string> orphan_seq;
+  strLoad.LoadGraph(idx_unitig_file, orphan_id, orphan_seq);
+  vector<string> unitigs;
+  strLoad.RecordEdgeSeqs(unitigs);
+  strLoad.Purge();
+  
+  string idx_kmer_file = workspace_dir + "/" + db_stem + ".kmp"; 
+  concat_seq = string(concat_seq.rbegin(), concat_seq.rend());
+  seq_search.IndexKmerPosition(protein_alphabet, mer_len, concat_seq, idx_kmer_file);
+  */
+  
+  /*
+  string idx_position_file = workspace_dir + "/" + db_stem + ".kmp";  
+  seq_search.IndexKmerPosition(
+    reduced_alphabet, mer_len,
+    unitigs, idx_position_file
+  );
+  */
   
   if(is_verbose)  {
     check_time = MyTime();
-    cout << "GRASP2-Build: Constructing and writing k-mer neighbors done. ";
+    cout << "GRASP2-Build: Constructing and writing k-mer index done. ";
     PrintElapsed(start_time, check_time, "");
     cout << "GRASP2-Build: End of program execution." << endl;
     cout << "============================================================" << endl;

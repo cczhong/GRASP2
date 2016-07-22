@@ -47,6 +47,7 @@ class STREdgeType {
               // (only make sense before condensing graphs)
   std::string seq_; // the sequence of the unitig
   bool traversed_;  // tag to check whether the edge has been traversed
+  bool tag_;
   std::vector<int> path_info_;  // a vector contanins the path information of the edge
                                 // with the following format: 
                                 // read_ID:overlap_len:read_ID:overlap_len:read_ID:...:read_ID 
@@ -70,6 +71,7 @@ class ExtType {
 
 struct SeqAlnInfoType  {
   int q1, q2; // the interval for the query sequence
+  int t1, t2; // the interval for the target sequence
   int id;     // the ID of the sequence
   int score;  // the alignment score of the sequence
 };
@@ -105,6 +107,8 @@ class StringGraph {
   void RemoveOrphantVertices();
   // remove tips in the graph; return the number of vertices deleted
   int RemoveTipsBeforeCondense();
+  int RemoveBubbleRight(const int step);
+  int RemoveBubbleLeft(const int step);
   // connect the unipaths and condense the graph
   void CondenseGraph(char** seq);
   // explore the condened graph and record all sequences that are longer than min_length
@@ -143,6 +147,7 @@ class StringGraph {
       std::vector<BoostSTREdge> &graph_edge,
       std::vector<int> &edge_ID, std::vector<int> &score, 
       std::vector<std::pair<int, int> > &q_interval,
+      std::vector<std::pair<int, int> > &t_interval,
       const double sim_cutoff,
       std::vector<std::string> &high_scoring_seqs
   );
@@ -152,7 +157,8 @@ class StringGraph {
       std::vector<std::string> &edge_seqs,
       std::vector<BoostSTREdge> &graph_edge,
       const int num_seqs, int *edge_ID, int *score, 
-      int *q_interval, const double sim_cutoff,
+      int *q_interval, int *t_interval,
+      const double sim_cutoff,
       std::vector<std::string> &high_scoring_seqs
   );
   

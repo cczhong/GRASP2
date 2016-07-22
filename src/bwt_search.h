@@ -14,7 +14,7 @@
 
 #include "bwt.h"
 
-static int cost = 5;
+static int cost = 6;
 static int m_cost = 3;
 static int g_cost = 4;
 static int max_queue_size = 100;
@@ -29,6 +29,13 @@ struct ExtInfo  {
 #endif
 };
 
+struct FwReSearchType {
+  std::pair<BWTIDX, BWTIDX> fw_range, re_range;
+  int search_cost;
+  int pivot_len, db_len;
+  //std::string s;
+};
+
 class ExtInfoComp {
  public:
   ExtInfoComp() {}
@@ -39,40 +46,51 @@ class ExtInfoComp {
   }
 };
 
+struct IvType {
+  std::pair<BWTIDX, BWTIDX> ivA_, ivB_;
+  int pivot_len_, db_len_; 
+};
+
 // defined as a set of forward intervals, reverse intervals, and lengths of these intervals
 class IvSet {
  public:
-  std::vector<std::pair<BWTIDX, BWTIDX> > ivA_, ivB_;
-  std::vector<int> len_;
+  
+  //std::vector<std::pair<BWTIDX, BWTIDX> > ivA_, ivB_;
+  //std::vector<int> pivot_len_;
+  //std::vector<int> db_len_;
+  std::vector<IvType> iv_list_; 
   
   explicit IvSet(void) {}
-  void Clear() {ivA_.clear(); ivB_.clear(); len_.clear();}
-  inline void PushA(const BWTIDX first, const BWTIDX second) {
-    ivA_.push_back(std::make_pair(first, second));
+  void Clear() {  iv_list_.clear();  }
+  inline void PushIV(const BWTIDX a_first, const BWTIDX a_second, const BWTIDX b_first, const BWTIDX b_second, const int p_len, const int d_len)  {
+    IvType iv; 
+    iv.ivA_ = std::make_pair(a_first, a_second);
+    iv.ivB_ = std::make_pair(b_first, b_second);
+    iv.pivot_len_ = p_len;
+    iv.db_len_ = d_len;
+    iv_list_.push_back(iv);
   }
-  inline void PushB(const BWTIDX first, const BWTIDX second) {
-    ivB_.push_back(std::make_pair(first, second));
+  bool IsRedundantA(const BWTIDX first, const BWTIDX second) {
+    for(int i = 0; i < iv_list_.size(); ++ i) {
+      if(iv_list_[i].ivA_.first == first && iv_list_[i].ivA_.second == second)  return true;
+    }
+    return false;
   }
-  inline void PushLen(const int len) {
-    len_.push_back(len);
-  }
+  inline int GetSize(void)  { return iv_list_.size(); }
   bool Check(void)  {
-    if(ivA_.size() != ivB_.size() || ivA_.size() != len_.size()) return false;
-    for(int i = 0; i < (int) len_.size() - 1; ++ i) {
-      if(len_[i] < len_[i + 1]) return false;
+    for(int i = 0; i < iv_list_.size() - 1; ++ i) {
+      if(iv_list_[i].pivot_len_ < iv_list_[i + 1].pivot_len_) return false;
     }
     return true;
   }
-  inline int GetSize(void)  {return len_.size();}
-  void Reverse(void) {
-    int n = len_.size();
-    int tmp_int; std::pair<BWTIDX, BWTIDX> tmp_pair;
-    for(int i = 0; i < (int) (n / 2); ++ i) {
-      tmp_int = len_[i]; len_[i] = len_[n - i - 1]; len_[n - i - 1] = tmp_int;
-      tmp_pair = ivA_[i]; ivA_[i] = ivA_[n - i - 1]; ivA_[n - i - 1] = tmp_pair;
-      tmp_pair = ivB_[i]; ivB_[i] = ivB_[n - i - 1]; ivB_[n - i - 1] = tmp_pair;
+
+  void Sort(void);
+  void PrintInterval(void)  {
+    std::cout << "==================" << std::endl;
+    for(int i = 0; i < iv_list_.size(); ++ i) {
+      std::cout << iv_list_[i].ivA_.first << " " << iv_list_[i].ivA_.second << std::endl;
     }
-    return;
+    std::cout << "==================" << std::endl;
   }
 };
 
@@ -109,9 +127,15 @@ class BWTSearch {
   void SearchAllSubRegions(
       BWT &bwt, const int min_len, const char *str, std::vector<AlignType> &all_pos
   );
+  bool UpdateForwardBackward(
+      IvInfo &search_info, const char c, 
+      std::pair<BWTIDX, BWTIDX> &fw_range, std::pair<BWTIDX, BWTIDX> &re_range
+  );
+
   // given a read of interest and minimum overlap, find all intervals (in both fw and re FM-indexes) 
   // corresponding to the prefix of the reads that perfectly overlap with the given read
   void SearchBeginIntervals(const char* seq, const int min_len, IvInfo &search_info);
+  void SearchBeginIntervals_V2(const char* seq, const int min_len, IvInfo &search_info);
   // given a set of intervals identified by SearchBeginIntervals,
   // find a set of positions that correspond to the irreducible positions in the reverse BWT
   void FindIrreducible(

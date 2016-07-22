@@ -534,9 +534,9 @@ class ScoringProt {
     }
     return sum;
   } 
-  
+
   int ComputeMatchingScoreExtend(
-      const std::string &s1, const std::string &s2,
+      const int mer_len, const std::string &s1, const std::string &s2,
       const int drop_off, int &q1, int &q2, int &t1, int &t2
   )  {
     if(q2 >= s1.length() || t2 >= s2.length() || q2 - q1 != t2 - t1)  {
@@ -544,44 +544,76 @@ class ScoringProt {
       exit(1);
     }
     
-    while(sc_[mx_idx_][ch_[s1[q1]]][ch_[s2[t1]]] < 0) {
-      ++ q1; ++ t1;
-      if(q1 > q2) break; 
+
+    int left_sum = 0;
+    for(int i = 0; i < mer_len; ++ i) {
+      left_sum += sc_[mx_idx_][ch_[s1[q1 + i]]][ch_[s2[t1 + i]]];
     }
-    while(sc_[mx_idx_][ch_[s1[q2]]][ch_[s2[t2]]] < 0) {
-      -- q2; --t2;
-      if(q2 < q1) break; 
-    }
-    int sum = 0;
-    for(int i = 0; i <= q2 - q1; ++ i) {
-      sum += sc_[mx_idx_][ch_[s1[q1 + i]]][ch_[s2[t1 + i]]];
-    }
-    
-    int max_score = sum;
-    int max_q1 = q1, max_t1 = t1, max_q2 = q2, max_t2 = t2;
+ 
+    int max_score = left_sum;
+    int tmp_q2 = q1 + mer_len - 1, tmp_t2 = t1 + mer_len - 1;
+    int left_max_q1 = q1, left_max_t1 = t1, left_max_q2 = tmp_q2, left_max_t2 = tmp_t2;
     // extend to the left
     --q1; --t1;
-    while(q1 >= 0 && t1 >= 0 && sum + drop_off >= max_score) {
+    while(q1 >= 0 && t1 >= 0 && left_sum + drop_off >= max_score) {
       //std::cout << "!2: " << sc_[mx_idx_][ch_[s1[q1]]][ch_[s2[t1]]] << std::endl;
-      sum += sc_[mx_idx_][ch_[s1[q1]]][ch_[s2[t1]]];
-      if(sum >= max_score)  {
-        max_score = sum; max_q1 = q1; max_t1 = t1;
+      left_sum += sc_[mx_idx_][ch_[s1[q1]]][ch_[s2[t1]]];
+      if(left_sum >= max_score)  {
+        max_score = left_sum; left_max_q1 = q1; left_max_t1 = t1;
       }
       -- q1; -- t1;
     }
-    sum = max_score; q1 = max_q1; t1 = max_t1;
+    left_sum = max_score;
     // extend to the right
-    ++ q2; ++ t2;
-    while(q2 < s1.length() && t2 < s2.length() && sum + drop_off >= max_score) {
+    ++ tmp_q2; ++ tmp_t2;
+    while(tmp_q2 < s1.length() && tmp_t2 < s2.length() && left_sum + drop_off >= max_score) {
       //std::cout << "!3: " << sc_[mx_idx_][ch_[s1[q2]]][ch_[s2[t2]]] << std::endl;
-      sum += sc_[mx_idx_][ch_[s1[q2]]][ch_[s2[t2]]];
-      if(sum >= max_score)  {
-        max_score = sum; max_q2 = q2; max_t2 = t2;
+      left_sum += sc_[mx_idx_][ch_[s1[tmp_q2]]][ch_[s2[tmp_t2]]];
+      if(left_sum >= max_score)  {
+        max_score = left_sum; left_max_q2 = tmp_q2; left_max_t2 = tmp_t2;
+      }
+      ++ tmp_q2; ++ tmp_t2;
+    }
+    left_sum = max_score;
+    if(left_max_q2 >= q2)  {
+      q2 = left_max_q2; t2 = left_max_t2;
+      return left_sum;
+    }
+
+    // if the second seed is not covered, extend to the left
+    int right_sum = 0;
+    for(int i = 0; i < mer_len; ++ i) {
+      right_sum += sc_[mx_idx_][ch_[s1[q2 - i]]][ch_[s2[t2 - i]]];
+    }
+    max_score = right_sum;
+    int tmp_q1 = q2 - mer_len + 1, tmp_t1 = t2 - mer_len + 1;
+    int right_max_q1 = tmp_q1, right_max_t1 = tmp_t1, right_max_q2 = q2, right_max_t2 = t2;
+    -- tmp_q1; -- tmp_t1;
+    while(tmp_q1 >= 0 && tmp_t1 >= 0 && right_sum + drop_off >= max_score) {
+      //std::cout << "!2: " << sc_[mx_idx_][ch_[s1[q1]]][ch_[s2[t1]]] << std::endl;
+      right_sum += sc_[mx_idx_][ch_[s1[tmp_q1]]][ch_[s2[tmp_t1]]];
+      if(right_sum >= max_score)  {
+        max_score = right_sum; right_max_q1 = tmp_q1; right_max_t1 = tmp_t1;
+      }
+      -- tmp_q1; -- tmp_t1;
+    }
+    ++ q2; ++ t2;
+    while(q2 < s1.length() && t2 < s2.length() && right_sum + drop_off >= max_score) {
+      //std::cout << "!3: " << sc_[mx_idx_][ch_[s1[q2]]][ch_[s2[t2]]] << std::endl;
+      right_sum += sc_[mx_idx_][ch_[s1[q2]]][ch_[s2[t2]]];
+      if(right_sum >= max_score)  {
+        max_score = right_sum; right_max_q2 = q2; right_max_t2 = t2;
       }
       ++ q2; ++ t2;
     }
-    sum = max_score; q2 = max_q2; t2 = max_t2;
-    return sum;
+    right_sum = max_score;
+    if(left_sum >= right_sum)  {
+      q1 = left_max_q1; q2 = left_max_q2; t1 = left_max_t1; t2 = left_max_t2;
+      return left_sum;
+    } else  {
+      q1 = right_max_q1; q2 = right_max_q2; t1 = right_max_t1; t2 = right_max_t2;
+      return right_sum;
+    }
   } 
   
   int ComputeCutoff(const long int m, const long int n, const double e_value) {

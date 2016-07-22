@@ -55,19 +55,22 @@ KmerUnitType KmerUnitcoder::Encode(const char *s) {
 int KmerUnitcoder::EncodeInt(const char *s) {
   int k = 0, n = alphabet_.GetSize();
   // check potential overflow
-  if(pow(n, mer_len_) > pow(2, 8 * sizeof(KmerUnitType))) {
+  if(pow(n, mer_len_) > pow(2, 8 * sizeof(int))) {
     cout << "KmerUnicoder::Error: k-mer size too long, overflow detected. Abort." << endl;
     exit(1);
   }
   for(int i = 0; i < mer_len_; ++ i)  {
+    if(!alphabet_.IsValid(s[i]))  return -1;
     int d = alphabet_.char_map_[s[i]];
     k = k * n + d;
   }
+  k = k % (int) pow(n, mer_len_);
   return k;
 }
 
 int KmerUnitcoder::EncodeIntRight(const int num, const char c) {
   int n = alphabet_.GetSize();
+  if(!alphabet_.IsValid(c))  return -1;
   int d = alphabet_.char_map_[c];
   return (num % (int) pow(n, mer_len_ - 1)) * n + d;
 }

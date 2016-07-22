@@ -40,6 +40,7 @@ class Loader  {
   // freq_cutoff: the portion of non-standard char cutoff to drop the string (return FALSE)
   //    otherwise modify the string and returns TRUE
   bool CheckSpecialChar(BioAlphabet &alphabet, std::string &sseq, float freq_cutoff = 0.9);
+  bool IsLowComplexity(std::string &seq);
   void RecordSequence(
     char **header, char **seq, 
     std::string &single_header, std::string &single_seq, 

@@ -498,12 +498,15 @@ void BWT::UpdateRange(
 }
 
 BWTIDX BWT::CountLexicoLess(const char c, const BWTIDX pos) {
-  BWTIDX occ = CountOccurrence(DELIM, pos);
-  //cout << "CountLexicoLess: " << occ << endl;
+  BWTIDX occ = 0;
+  if(c != DELIM) occ += CountOccurrence(DELIM, pos);
+  int x = alphabet_.GetCharMap(c);
+  //cout << "CountLexicoLess: " << occ << " " << x << " " << alphabet_.GetInvCharMap(x) << endl;
   for(int i = 0; i < alphabet_.GetCharMap(c); ++ i) { 
     occ += CountOccurrence(alphabet_.GetInvCharMap(i), pos);
     //cout << "CountLexicoLess: " << alphabet_.GetInvCharMap(i) << "  " << occ << endl;
   }
+  //cout << "CountLexicoLess final: " << occ << endl;
   //cout << "End of function CountLexicoLess" << endl;
   return occ;
 }
