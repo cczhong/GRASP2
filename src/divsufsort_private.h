@@ -43,17 +43,15 @@ extern "C" {
 #include <inttypes.h>
 #include <stdint.h>
 
-#include "divsufsort64.h"
-
+#if defined(BUILD_DIVSUFSORT64)
+# include "divsufsort64.h"
 # ifndef SAIDX_T
 #  define SAIDX_T
 #  define saidx_t saidx64_t
 # endif /* SAIDX_T */
-
 # ifndef PRIdSAIDX_T
 #  define PRIdSAIDX_T PRIdSAIDX64_T
 # endif /* PRIdSAIDX_T */
-
 # define divsufsort divsufsort64
 # define divbwt divbwt64
 # define divsufsort_version divsufsort64_version
@@ -64,7 +62,9 @@ extern "C" {
 # define sa_simplesearch sa_simplesearch64
 # define sssort sssort64
 # define trsort trsort64
-
+#else
+# include "divsufsort.h"
+#endif
 
 /*- Constants -*/
 #if !defined(UINT8_MAX)

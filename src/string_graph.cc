@@ -3,39 +3,56 @@
 using namespace std;
 
 // import all information in the extension into the string graph
-void StringGraph::ImportExtension(std::vector<ExtType> &extension) {
+void StringGraph::ImportExtension(
+    const int data_size, std::vector<bool> *contained, 
+    std::vector<std::vector<TargetOverlapType> *> *extension
+) {
+  assert(data_size == contained->size());
   if(!initialized_) p_graph_ = new BoostSTRGraph;
   initialized_ = true;
+  bool *node_present = new bool [data_size];
+  memset(node_present, false, sizeof(bool) * data_size);
+  BoostSTRVertex *node_index = new BoostSTRVertex [data_size];
   int i, j;
-  for(i = 0; i < extension.size(); ++ i) {
+  for(i = 0; i < data_size; ++ i) {
+    //cout << "source:  " << i << endl;
+    if((*contained)[i] && (*extension)[i] != NULL) {
+      (*extension)[i]->clear(); delete (*extension)[i]; (*extension)[i] = NULL;
+      continue;
+    }
     // process the source read
     BoostSTRVertex v_source;
-    auto it_source = node_hash_.find(extension[i].source_);
-    if(it_source == node_hash_.end()) {
+    if(!node_present[i]) {
       // adding the new vertex with recorded ID
-      STRVertexType node(extension[i].rid_);
+      STRVertexType node(i);
       v_source = boost::add_vertex(node, *p_graph_);
       // record the read in node_hash_
-      node_hash_[extension[i].source_] = v_source;
+      node_present[i] = true;
+      node_index[i] = v_source;
+      //cout << "create new source node" << endl;
     } else  {
-      v_source = it_source->second;
-      // setting the ID if the corresponding vertex is already in the graph
-      (*p_graph_)[v_source].SetID(extension[i].rid_);
+      v_source = node_index[i];
+      //cout << "using existing source node" << endl;
     }
     
-    //cout << "Vertex ID set: " << (*p_graph_)[v_source].rid_ << endl;
-    
     // now process the target reads
-    for(j = 0; j < extension[i].ir_position_.size(); ++ j) {
-      BoostSTRVertex v_target;
-      auto it_target = node_hash_.find(extension[i].ir_position_[j]);
-      if(it_target == node_hash_.end()) {
+    for(j = 0; j < (*extension)[i]->size(); ++ j) {  
+      BWTINT tid = (*(*extension)[i])[j].rid;
+      if((*contained)[tid])  continue;
+      //cout << " checking target read: " << tid << endl;
+      BoostSTRVertex v_target;      
+      if(!node_present[tid]) {
         // adding the new vertex without ID
-        STRVertexType node_foo;
+        STRVertexType node_foo(tid);
         v_target = boost::add_vertex(node_foo, *p_graph_);
         // record the read in node_hash_
-        node_hash_[extension[i].ir_position_[j]] = v_target;
-      } else  {v_target = it_target->second;}
+        node_present[tid] = true;
+        node_index[tid] = v_target;
+        //cout << "create new target node" << endl;
+      } else  {
+        v_target = node_index[tid];
+        //cout << "using existing target node" << endl;
+      }
       // check the two vertices are not the same vertex, avoid self-cycles
       if(v_source == v_target) continue;
       // add corresponding edge between 
@@ -43,16 +60,169 @@ void StringGraph::ImportExtension(std::vector<ExtType> &extension) {
       if(!e_search.second)  {e_search = boost::add_edge(v_source, v_target, *p_graph_);} 
       if(e_search.second) {
         // set the corresponding length
-        (*p_graph_)[e_search.first].SetLen(extension[i].ir_overlap_[j]);
+        (*p_graph_)[e_search.first].SetLen((*(*extension)[i])[j].overlap_len);
       } else  {
         cout << "Error:: StringGraph::Construct: Failed to add edges between vertices!" << endl;
       }
+    }
+    if((*extension)[i] != NULL) {
+      (*extension)[i]->clear(); delete (*extension)[i]; (*extension)[i] = NULL;
+      continue;
+    }
+  }
+  delete [] node_present; delete [] node_index;
+  return;
+}
+
+void StringGraph::FillRevExtension(
+    std::vector<bool> *contained,
+    std::vector<std::vector<TargetOverlapType> *> *extension, 
+    std::vector<std::vector<TargetOverlapType> *> *rev_extension
+) {
+  int data_size = contained->size();
+  for(BWTINT i = 0; i < data_size; ++ i) {
+    //cout << "source:  " << i << endl;
+    if((*contained)[i] && (*extension)[i] != NULL) {
+      (*extension)[i]->clear(); continue;
+    }
+    // now process the target reads
+    for(BWTINT j = 0; j < (*extension)[i]->size(); ++ j) {  
+      BWTINT tid = (*(*extension)[i])[j].rid;
+      if((*contained)[tid])  {(*(*extension)[i])[j].visited = true; continue;}
+      // record the information
+      (*(*extension)[i])[j].visited = false;
+      TargetOverlapType t;
+      t.rid = i; t.overlap_len = (*(*extension)[i])[j].overlap_len; t.visited = false;
+      (*rev_extension)[tid]->push_back(t);
     }
   }
   return;
 }
 
-void StringGraph::MultiComputeExtension(
+void StringGraph::WriteUnitigsFromExtension(
+    char **seqs,
+    std::vector<bool> *contained,
+    std::vector<std::vector<TargetOverlapType> *> *extension, 
+    std::vector<std::vector<TargetOverlapType> *> *rev_extension,
+    int *order, std::string &file_name
+) {
+  ofstream out_file;
+  out_file.open(file_name, ios::out);
+  if(!out_file.is_open())  {
+    cout << "StringGraph::WriteGraph: Error in writing indexing file " << file_name << "; Abort." << endl;
+  }
+  // use depth-first search to traverse the graph and output unitigs
+  //cout << "Function begin:  " << contained->size() << endl;
+  int data_size = contained->size();
+  BWTINT i, j, k;
+  for(i = 0; i < data_size; ++ i) {
+    if((*contained)[i] || (*extension)[i]->size() <= 0)  {
+      //cout << i << "  " << (*contained)[i] << "  " << (*extension)[i]->size() << endl;
+      continue;
+    }
+    for(j = 0; j < (*extension)[i]->size(); ++ j) {
+      BWTINT tid = (*(*extension)[i])[j].rid;      
+      if((*contained)[tid] || (*(*extension)[i])[j].visited)  {
+        //cout << "target info: " << j << "  " << tid << "  " << (*contained)[tid] << " " << (*(*extension)[i])[j].visited << endl;
+        continue;
+      }
+      //cout << "extending edge:  " << i << " " << tid << endl;      
+      (*(*extension)[i])[j].visited = true;
+      // compute the initailized path and correspondng sequence
+      BWTSHORT init_overlap = (*(*extension)[i])[j].overlap_len;
+      string unitig = seqs[i]; unitig += &seqs[tid][init_overlap];
+      //cout << "init unitig: " << unitig << endl;
+
+      stack<BWTINT> left_path; queue<BWTINT> right_path;
+      bool cont; 
+      BWTINT current = i, next, left_terminal, right_terminal;
+      // extend to the left and mark the visited edges
+      do {
+        left_terminal = current;
+        cont = TraverseExtensionLeft(seqs, extension, rev_extension, current, next, left_path, unitig);
+        current = next;
+        //cout << "left extension performed:  " << cont << " " << unitig << endl;
+      } while(cont);
+      // extend to the right and mark the visited edges
+      current = tid;
+      do {
+        right_terminal = current;
+        cont = TraverseExtensionRight(seqs, extension, rev_extension, current, next, right_path, unitig);
+        current = next;
+        //cout << "right extension performed:  " << cont << " " << unitig << endl;
+      } while(cont);
+      // output the current unitig
+      left_terminal = order[left_terminal]; right_terminal = order[right_terminal];
+      out_file << ">" << left_terminal << ":" << strlen(seqs[left_terminal]) << ":" << right_terminal << ":" << strlen(seqs[right_terminal]) << ":";
+      while(!left_path.empty()) {
+        if(left_path.size() % 2 == 0)  out_file << order[left_path.top()] << ":"; 
+        else  out_file << left_path.top() << ":"; 
+        left_path.pop();
+      }
+      out_file << order[i] << ":" << init_overlap << ":" << order[tid];
+      while(!right_path.empty()) {
+        if(left_path.size() % 2 == 0) out_file << ":" << right_path.front(); 
+        else  out_file << ":" << order[right_path.front()]; 
+        right_path.pop();
+      }
+      out_file << endl;
+      out_file << unitig << endl;
+    }
+  }
+  out_file.close();
+  return;
+}
+
+bool StringGraph::TraverseExtensionLeft(
+    char **seqs,
+    std::vector<std::vector<TargetOverlapType> *> *extension, 
+    std::vector<std::vector<TargetOverlapType> *> *rev_extension, 
+    const BWTINT current, BWTINT &next, std::stack<BWTINT> &path, std::string &unitig
+) {
+  //cout << "extension size:  " << (*extension)[current]->size() << endl;
+  //cout << "rev_extension size:  " << (*rev_extension)[current]->size() << endl;
+  if((*extension)[current]->size() > 1 || (*rev_extension)[current]->size() != 1)  {
+    //cout << "here!!!" << endl;
+    // this is the end of a unitig
+    return false;
+  } 
+  next = (*(*rev_extension)[current])[0].rid;
+  BWTINT idx;
+  for(idx = 0; idx < (*extension)[next]->size(); ++ idx) {
+    if((*(*extension)[next])[idx].rid == current)  break;
+  }
+  if((*(*extension)[next])[idx].visited)  return false;
+  // extend the path by taking the only incoming edge  
+  BWTINT ol = (*(*rev_extension)[current])[0].overlap_len;
+  path.push(ol); path.push(next);
+  string s = seqs[next];
+  unitig = s.substr(0, strlen(seqs[next]) - ol) + unitig;
+  // mark the edge as visited
+  (*(*extension)[next])[idx].visited = true;
+  return true;
+}
+
+bool StringGraph::TraverseExtensionRight(
+    char **seqs,
+    std::vector<std::vector<TargetOverlapType> *> *extension, 
+    std::vector<std::vector<TargetOverlapType> *> *rev_extension, 
+    const BWTINT current, BWTINT &next, std::queue<BWTINT> &path, std::string &unitig
+) {
+  if((*rev_extension)[current]->size() > 1 || (*extension)[current]->size() != 1 || (*(*extension)[current])[0].visited)  {
+    // this is the end of a unitig
+    return false;
+  } 
+  // extend the path by taking the only incoming edge
+  next = (*(*extension)[current])[0].rid;
+  BWTINT ol = (*(*extension)[current])[0].overlap_len;
+  path.push(ol); path.push(next);
+  unitig = unitig + &seqs[next][ol];
+  // mark the edge as visited
+  (*(*extension)[current])[0].visited = true;
+  return true;
+}
+
+void StringGraph::MultiComputeExtension_old(
     const int threads, const int min_overlap, 
     const int offset, const int n, char **seq, 
     BWT &bwt, BWT &rev_bwt, std::vector<ExtType> &extension
@@ -70,7 +240,7 @@ void StringGraph::MultiComputeExtension(
   {
     #pragma omp for
     for(i = 0; i < threads; ++ i) {
-      ComputeExtension(
+      ComputeExtension_old(
           min_overlap, range[i] + 1, range[i + 1] - range[i], &seq[range[i] + 1], 
           bwt, rev_bwt, extension_multi[i]
       );
@@ -85,7 +255,7 @@ void StringGraph::MultiComputeExtension(
   return;
 }
 
-void StringGraph::ComputeExtension(
+void StringGraph::ComputeExtension_old(
     const int min_overlap, const int offset, const int n, char **seq, 
     BWT &bwt, BWT &rev_bwt, std::vector<ExtType> &extension
 ) {
@@ -116,6 +286,130 @@ void StringGraph::ComputeExtension(
   delete [] r_seq;
   return;
 }
+
+void StringGraph::MultiComputeExtension(
+    const int threads, const int min_overlap, const int n, char **seq, 
+    const int target_id_begin, BWT &bwt, 
+    std::vector<std::vector<TargetOverlapType> *> *extension, std::vector<bool> *contained
+) {
+  int i, j;
+  // determine the ranges for each chunk
+  vector<int> range;
+  range.push_back(-1);
+  int chunk_size = n / threads;
+  for(i = 0; i < threads - 1; ++ i) range.push_back(range.back() + chunk_size);
+  range.push_back(n - 1);
+  // batch execution
+  #pragma omp parallel num_threads(threads) shared(extension)
+  {
+    #pragma omp for
+    for(i = 0; i < threads; ++ i) {
+      ComputeExtension(
+          min_overlap, range[i] + 1, range[i + 1] - range[i], 
+          seq, target_id_begin, bwt, extension, contained
+      );
+    }
+    #pragma omp taskwait
+  }
+  return;
+}
+
+void StringGraph::ComputeExtension(
+    const int min_overlap, const int offset, const int n, char **seq, 
+    const int target_id_begin, BWT &bwt, 
+    std::vector<std::vector<TargetOverlapType> *> *extension, std::vector<bool> *contained
+) {
+  //cout << "Starting computing extension:  " << offset << "  " << n << endl;
+  BWTSearch bwt_searcher;
+  int i, j, k;
+  for(i = 0; i < n; ++ i) {
+    string s = seq[offset + i];
+    bwt_searcher.ComputeOverlapInfo(seq, offset + i, target_id_begin, bwt, min_overlap, extension, contained);
+  }
+  //cout << "Done computing extension:  " << offset << "  " << n << endl;
+  return;
+}
+
+/*
+void StringGraph::ComputeEdgeLen(const int num_seqs, char **seqs, std::vector<std::vector<TargetOverlapType> *> *extension)  {
+  BWTINT i, j;
+  for(i = 0; i < num_seqs; ++ i) {
+    for(j = 0; j < (*extension)[i]->size(); ++ j) {
+      (*(*extension)[i])[j].edge_len = strlen(seqs[i]) + strlen(seqs[(*(*extension)[i])[j].rid]) - (*(*extension)[i])[j].overlap_len;
+    }
+  }
+  return;
+}
+*/
+
+/*
+void StringGraph::DetectContained(
+    const int num_seqs, char **seqs, std::vector<std::vector<TargetOverlapType> *> *extension, std::vector<bool> &contained
+) {
+  // initialize the array to all non-contained
+  BWTINT i, j;
+  for(i = 0; i < num_seqs; ++ i) {
+    if(contained[i] || (*extension)[i]->size() <= 0) continue;
+    for(j = 0; j < (*extension)[i]->size(); ++ j) {
+      BWTINT tid = (*(*extension)[i])[j].rid;
+      if(contained[tid]) continue;
+      if((*(*extension)[i])[j].overlap_len == strlen(seqs[i]) || (*(*extension)[i])[j].overlap_len == strlen(seqs[tid]))  {
+        if(strlen(seqs[i]) >= strlen(seqs[tid]))  {
+          // mark the target read as contained
+          contained[tid] = true;
+        } else  {
+          // mark the source read as contained
+          contained[i] = true;
+        }
+      }
+      if(contained[i]) continue;
+    }    
+  }  
+  return;
+}
+*/
+
+/*
+void StringGraph::RemoveReducibleEdges(const int num_seqs, std::vector<bool> &contained, std::vector<std::vector<TargetOverlapType> *> *extension)  {
+  // sort all vertices based on the corresponding edge lengths
+  int i, j, k;
+  for(i = 0; i < num_seqs; ++ i) {
+    sort((*extension)[i]->begin(), (*extension)[i]->end(), SortTargetOverlapType);
+  }
+  // eliminate reducible edges
+  bool *eliminate_tag = new bool [num_seqs];  
+  memset(eliminate_tag, false, sizeof(bool) * num_seqs);
+  
+  for(i = 0; i < num_seqs; ++ i) {
+    if(contained[i])  continue; // do not consider contained reads
+    //stack<BWTINT> modified;
+    vector<BWTINT> modified;
+    //memset(eliminate_tag, false, sizeof(bool) * extension.size());
+    for(j = 0; j < (*extension)[i]->size(); ++ j) {
+      BWTINT tid = (*(*extension)[i])[j].rid;
+      if(!contained[tid] && !eliminate_tag[tid]) {
+        for(k = 0; k < (*extension)[tid]->size(); ++ k) {
+          eliminate_tag[tid] = true;  
+          modified.push_back(tid);
+        }
+      }
+    }
+    for(j = 0; j < (*extension)[i]->size(); ++ j) {
+      (*(*extension)[i])[j].eliminated = eliminate_tag[(*(*extension)[i])[j].rid]; 
+    }
+    // resetting the values to false
+    sort(modified.begin(), modified.end());
+    for(j = 0; j < modified.size(); ++ j) {
+      eliminate_tag[j] = false;
+    }
+    //while(!modified.empty())  {
+    //  eliminate_tag[modified.top()] = false; modified.pop();
+    //}
+  }
+  delete [] eliminate_tag;
+  return;
+}
+*/
 
 void StringGraph::RemoveOrphantVertices() {
   // remove orphant vertices
@@ -469,7 +763,7 @@ void StringGraph::CondenseGraph(char** seq)  {
   auto it_e = boost::edges(*p_graph_).first;
   while(it_e != boost::edges(*p_graph_).second) {
     bool to_del = false; BoostSTREdge de;
-    if((*p_graph_)[*it_e].seq_.length() <= 0)  {
+    if((*p_graph_)[*it_e].path_info_.size() <= 0)  {
         de = *it_e; to_del = true;
     }
     ++ it_e;
@@ -487,7 +781,7 @@ void StringGraph::Condense(char** seq, const BoostSTREdge source_edge) {
     BoostSTRVertex tail = boost::target(init_edge, *p_graph_);  
     if(head == tail) continue;
     else tail = head;
-    string p = seq[(*p_graph_)[head].rid_];
+    //string p = seq[(*p_graph_)[head].rid_];
     int total_vertices = 1;
     vector<int> path_info; path_info.push_back((*p_graph_)[head].rid_);
     // construct the path sequence
@@ -501,7 +795,7 @@ void StringGraph::Condense(char** seq, const BoostSTREdge source_edge) {
       path_info.push_back((*p_graph_)[current_edge].len_); 
       path_info.push_back((*p_graph_)[tail].rid_);  
       // update the sequence and multiplicity
-      p += &seq[(*p_graph_)[tail].rid_][(*p_graph_)[current_edge].len_];
+      //p += &seq[(*p_graph_)[tail].rid_][(*p_graph_)[current_edge].len_];
       ++ total_vertices;      
       // remove the previous edge
       boost::remove_edge(current_edge, *p_graph_);
@@ -523,7 +817,7 @@ void StringGraph::Condense(char** seq, const BoostSTREdge source_edge) {
     if(head != tail)  {
       std::pair<BoostSTREdge, bool> edge_new = add_edge(head, tail, *p_graph_);
       if(edge_new.second) {
-        (*p_graph_)[edge_new.first].SetSeq(p);
+        //(*p_graph_)[edge_new.first].SetSeq(p);
         (*p_graph_)[edge_new.first].path_info_ = path_info;
       }
     }
@@ -589,7 +883,131 @@ void StringGraph::TraverseUnbranched(
   return;
 }
 
+std::string StringGraph::GenSeqFromPathInfo(char **seq, std::vector<int> &path_info) {
+  assert(path_info.size() >= 3);
+  string s = seq[path_info[0]];
+  //cout << s << endl;
+  for(int i = 1; i < path_info.size(); i += 2) {
+    //cout << "???  " << seq[path_info[i]] << endl;
+    //cout << "!!!  " << path_info[i + 1] << endl;
+    s += &seq[path_info[i + 1]][path_info[i]];
+    //cout << path_info[i + 1] << " " << path_info[i + 2] << endl;
+    //cout << seq[path_info[i + 2]] << endl;
+    //cout << s << endl;
+  } 
+  return s;
+}
+
 void StringGraph::WriteGraph(
+    BioAlphabet &alphabet, char** seq,
+   const std::string &file_name
+) {
+  ofstream out_file;
+  out_file.open(file_name, ios::out);
+  if(!out_file.is_open())  {
+    cout << "StringGraph::WriteGraph: Error in writing indexing file " << file_name << "; Abort." << endl;
+  }
+  
+  // writing all edges
+  int e_size = boost::num_edges(*p_graph_);
+  char **pheader = new char* [e_size];
+  char **pseq = new char* [e_size];
+  auto ite = boost::edges(*p_graph_).first;
+  while(ite != boost::edges(*p_graph_).second) {
+    stringstream out_header;
+    BoostSTRVertex s = boost::source(*ite, *p_graph_);
+    BoostSTRVertex t = boost::target(*ite, *p_graph_);
+    out_header << ">" << (*p_graph_)[s].rid_ << ":" << strlen(seq[(*p_graph_)[s].rid_]) 
+        << ":" << (*p_graph_)[t].rid_ << ":" << strlen(seq[(*p_graph_)[t].rid_]);
+    for(int i = 0; i < (*p_graph_)[*ite].path_info_.size(); ++ i) {
+      out_header << ":" << (*p_graph_)[*ite].path_info_[i];
+    }
+    out_file << out_header.str() << endl;
+    string path_seq = GenSeqFromPathInfo(seq, (*p_graph_)[*ite].path_info_);
+    out_file << path_seq.c_str() << endl;
+    ++ ite;
+  }  
+
+  // writing all orphant reads
+  /*
+  auto itv = boost::vertices(*p_graph_).first;
+  while(itv != boost::vertices(*p_graph_).second) {
+    if(degree(*itv, *p_graph_) <= 0)  {
+      stringstream out_header;
+      out_header << ">" << (*p_graph_)[*itv].rid_ 
+          << ":" << strlen(seq[(*p_graph_)[*itv].rid_]) 
+          << ":" << (*p_graph_)[*itv].rid_ << ":" 
+          << strlen(seq[(*p_graph_)[*itv].rid_]);
+      out_file << out_header.str() << endl;
+      out_file << seq[(*p_graph_)[*itv].rid_] << endl;     
+    }
+    ++ itv;
+  }
+  */
+  out_file.close();
+  return;
+}
+
+void StringGraph::WriteGraph(
+    BioAlphabet &alphabet, char** seq, int *order,
+   const std::string &file_name
+) {
+  ofstream out_file;
+  out_file.open(file_name, ios::out);
+  if(!out_file.is_open())  {
+    cout << "StringGraph::WriteGraph: Error in writing indexing file " << file_name << "; Abort." << endl;
+  }
+  
+  // writing all edges
+  int e_size = boost::num_edges(*p_graph_);
+  char **pheader = new char* [e_size];
+  char **pseq = new char* [e_size];
+  auto ite = boost::edges(*p_graph_).first;
+  while(ite != boost::edges(*p_graph_).second) {
+    stringstream out_header;
+    BoostSTRVertex s = boost::source(*ite, *p_graph_);
+    BoostSTRVertex t = boost::target(*ite, *p_graph_);
+    BWTINT ids = order[(*p_graph_)[s].rid_];
+    BWTINT idt = order[(*p_graph_)[t].rid_];
+    out_header << ">" << ids << ":" << strlen(seq[(*p_graph_)[s].rid_]) 
+        << ":" << idt << ":" << strlen(seq[(*p_graph_)[t].rid_]);
+    for(int i = 0; i < (*p_graph_)[*ite].path_info_.size(); ++ i) {
+      if(i % 2 == 0)  {
+        BWTINT id = order[(*p_graph_)[*ite].path_info_[i]];
+        out_header << ":" << id;
+      } else  {
+        out_header << ":" << (*p_graph_)[*ite].path_info_[i];
+      }
+    }
+    out_file << out_header.str() << endl;
+    string path_seq = GenSeqFromPathInfo(seq, (*p_graph_)[*ite].path_info_);
+    out_file << path_seq.c_str() << endl;
+    ++ ite;
+  }  
+
+  // writing all orphant reads
+  /*
+  auto itv = boost::vertices(*p_graph_).first;
+  while(itv != boost::vertices(*p_graph_).second) {
+    if(degree(*itv, *p_graph_) <= 0)  {
+      stringstream out_header;
+      out_header << ">" << order[(*p_graph_)[*itv].rid_] 
+          << ":" << strlen(seq[(*p_graph_)[*itv].rid_]) 
+          << ":" << order[(*p_graph_)[*itv].rid_] << ":" 
+          << strlen(seq[(*p_graph_)[*itv].rid_]);
+      out_file << out_header.str() << endl;
+      out_file << seq[(*p_graph_)[*itv].rid_] << endl;     
+    }
+    ++ itv;
+  }
+  */
+  out_file.close();
+  return;
+}
+
+
+/*
+void StringGraph::WriteGraph_obsolete(
     BioAlphabet &alphabet, 
     char** seq, const std::string &file_name
 ) {
@@ -668,6 +1086,7 @@ void StringGraph::WriteGraph(
   out_file.close();
   return;
 }
+*/
 
 void StringGraph::LoadGraph(
     const std::string &file_name, 

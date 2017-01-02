@@ -2,6 +2,8 @@
 
 using namespace std;
 
+// TODO: ensure the sequence has length less than 65535 because we use 16bit to represent sequence length
+
 Loader::Loader()  {
   return;
 }
@@ -41,6 +43,15 @@ void Loader::RecordSequence(
   return;
 }
 
+void Loader::RecordSequence(
+  char **seq, std::string &single_seq, int index
+) {
+  assert(single_seq.length() > 0);
+  seq[index] = new char[single_seq.length() + 1];
+  strcpy(seq[index], single_seq.c_str());
+  return;
+}
+
 bool Loader::CheckSpecialChar(BioAlphabet &alphabet, std::string &sseq, float freq_cutoff) {
   int num_special = 0;
   for(int i = 0; i < sseq.length(); ++ i)  {
@@ -67,10 +78,12 @@ int Loader::LoadFasta(BioAlphabet &alphabet, const char *file_name, char **heade
     if (line[0] == '>') {
       if (fasta_tag != "" && fasta_seq != "") {
         CheckSpecialChar(alphabet, fasta_seq);
-        if(!IsLowComplexity(fasta_seq)) {
-          RecordSequence(header, seq, fasta_tag, fasta_seq, count);
-          ++ count;
-        }
+        //if(!IsLowComplexity(fasta_seq)) {
+        RecordSequence(header, seq, fasta_tag, fasta_seq, count);
+        ++ count;
+        //} else  {
+        //  cout << "Warning: low-compexity read discarded: " << fasta_seq << endl;
+        //}
       }
       fasta_tag = line.substr(1, line.length() - 1); fasta_seq = ""; 
     } else fasta_seq += line;
@@ -79,10 +92,45 @@ int Loader::LoadFasta(BioAlphabet &alphabet, const char *file_name, char **heade
   // handle the last sequence		
   if (fasta_tag != "" && fasta_seq != "") {
     CheckSpecialChar(alphabet, fasta_seq);
-    if(!IsLowComplexity(fasta_seq))  {
-      RecordSequence(header, seq, fasta_tag, fasta_seq, count);
-      ++ count;
-    }
+    //if(!IsLowComplexity(fasta_seq))  {
+    RecordSequence(header, seq, fasta_tag, fasta_seq, count);
+    ++ count;
+    //} else  {
+    //  cout << "Warning: low-compexity read discarded: " << fasta_seq << endl;
+    //}
+  }		
+  return count;
+}
+
+int Loader::LoadFasta(BioAlphabet &alphabet, const char *file_name, char **seq) {
+  // opens the file and read line-by-line
+  std::ifstream ifstrm(file_name, std::ios_base::in);
+  std::string line, fasta_tag, fasta_seq;
+  int count = 0;
+  while (std::getline(ifstrm, line)) {
+    if (line[0] == '>') {
+      if (fasta_tag != "" && fasta_seq != "") {
+        CheckSpecialChar(alphabet, fasta_seq);
+        //if(!IsLowComplexity(fasta_seq)) {
+        RecordSequence(seq, fasta_seq, count);
+        ++ count;
+        //} else  {
+        //  cout << "Warning: low-compexity read discarded: " << fasta_seq << endl;
+        //}
+      }
+      fasta_tag = line.substr(1, line.length() - 1); fasta_seq = ""; 
+    } else fasta_seq += line;
+  }
+  ifstrm.close();	
+  // handle the last sequence		
+  if (fasta_tag != "" && fasta_seq != "") {
+    CheckSpecialChar(alphabet, fasta_seq);
+    //if(!IsLowComplexity(fasta_seq))  {
+    RecordSequence(seq, fasta_seq, count);
+    ++ count;
+    //} else  {
+    //  cout << "Warning: low-compexity read discarded: " << fasta_seq << endl;
+    //}
   }		
   return count;
 }

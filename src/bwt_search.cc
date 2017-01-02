@@ -290,6 +290,248 @@ void BWTSearch::CalLowerBound(BWT &rev_bwt, const char *str, int *bound) {
   return;
 }
 
+void BWTSearch::ComputeOverlapInfo(
+    char **seqs, const int rid, const int target_id_begin, BWT &bwt, const int min_len,
+    std::vector<std::vector<TargetOverlapType> *> *extension, std::vector<bool> *contained
+) {
+  //cout << "processing sequence: " << seqs[rid] << endl;
+  // the the current read is contained by some other reads detected in previous searches, skip
+  if((*contained)[rid]) return;
+  string s = seqs[rid];
+  int n = s.length();
+  // if the total length of the read is less than the minimum overlap, return
+  if(n < min_len) return;
+  // initialize the search for the overlapping region
+  pair<BWTIDX, BWTIDX> fw_range, fw_range_terminal;
+  fw_range.first = 0; 
+  fw_range.second = bwt.GetSize();
+  int i;
+  for(i = 0; i < min_len; ++ i) {
+    //cout << "search sequence: " << &seq[n - i - 1] << endl;
+    char c = s[n - i - 1];
+    BWTIDX occbegin = bwt.CountOccurrence(c, fw_range.first);
+    BWTIDX occend = bwt.CountOccurrence(c, fw_range.second);
+    //cout << "initial range: " << fw_range.first << "  " << fw_range.second << endl;
+    //cout << "search occurrence:  " << c << " " << occbegin << "  " << occend << endl;
+    if(occbegin >= occend)  break;
+    //cout << "lexicographical smaller: " << search_info.bwtF_->CountLexicoLess(c, fw_range.first) << "  " << search_info.bwtF_->CountLexicoLess(c, fw_range.second) << endl;
+    int c_id = bwt.alphabet_.GetCharMap(c);
+    fw_range.first = bwt.acc_freq_[c_id + 1] + occbegin;
+    fw_range.second = bwt.acc_freq_[c_id + 1] + occend;
+    //cout << "updated range: " << fw_range.first << "  " << fw_range.second << "  " << re_range.first << "  " << re_range.second << endl;
+  }
+  // if no sequence overlap for the given minumum overlap length, return
+  if(i < min_len) return;
+  // otherwise also try to search the delimitor to detect begin intervals
+  // recall that i is less than n - 1 because we do not want the read itself
+  // or other wise the read is contained by other reads
+  vector<pair<BWTIDX, BWTIDX> > range_holder;
+  vector<int> len_holder;
+  int covered_range = min_len;
+  for(i = min_len; i < n; ++ i) {
+    // extend the sequence
+    //cout << "search sequence: " << &seq[n - i - 1] << " " << n << " " << i << endl;
+    //cout << "initial range: " << fw_range.first << "  " << fw_range.second << "  " << re_range.first << "  " << re_range.second << endl;
+    char c = s[n - i - 1];
+    BWTIDX occbegin = bwt.CountOccurrence(c, fw_range.first);
+    BWTIDX occend = bwt.CountOccurrence(c, fw_range.second);
+    //cout << "search occurrence:  " << c << " " << occbegin << "  " << occend << endl;
+    //cout << "lexicographical smaller: " << search_info.bwtF_->CountLexicoLess(c, fw_range.first) << "  " << search_info.bwtF_->CountLexicoLess(c, fw_range.second) << endl;
+    if(occbegin >= occend)  break;
+    int c_id = bwt.alphabet_.GetCharMap(c);
+    fw_range.first = bwt.acc_freq_[c_id + 1] + occbegin;
+    fw_range.second = bwt.acc_freq_[c_id + 1] + occend;
+    covered_range = i;
+    // also search for the delimitor (with the updated fw_range and re_range)
+    //cout << "initial terminal range: " << fw_range.first << "  " << fw_range.second << endl;
+    occbegin = bwt.CountOccurrence(DELIM, fw_range.first);
+    occend = bwt.CountOccurrence(DELIM, fw_range.second);
+    //cout << "search terminal occurrence:  " << occbegin << "  " << occend << endl;
+    if(occbegin >= occend)  continue;
+    // note that delimitor is the lexico-smallest char, 
+    // no need to add CountLexicoLess nor acc_freq
+    fw_range_terminal.first = occbegin;
+    fw_range_terminal.second = occend;
+    // interpret such interval and record the read IDs
+    range_holder.push_back(fw_range_terminal);
+    len_holder.push_back(i + 1);
+    //cout << "overlap recorded !!!" << endl;
+    //cout << "overlap  " << i + 1 << endl;
+  }
+  if(range_holder.size() < 1) return;
+  //cout << "start here:  " << rid << endl;
+  // the read is contained, record it and terminate
+  //cout << "non-terminal range:  " << fw_range.first << "  " << fw_range.second << endl;
+  if(covered_range >= n - 1)  {
+    for(BWTIDX j = fw_range.first; j < fw_range.second; ++ j)  {
+      BWTINT tid, tpos;
+      bwt.GetRefLocation(j, tid, tpos); 
+      tid += target_id_begin; // notice that this is not terminal, so do not need to add 1 to the target ID
+      if(rid == tid) continue;
+      if(strlen(seqs[tid]) > s.length() || (strlen(seqs[tid]) == s.length() && !(*contained)[tid]) )  {
+        // this read is contained
+        (*contained)[rid] = true; 
+          
+        //if(rid == 7641357 || rid == 3356853)  {
+        //  cout << "mark contained by ComputeOverlapInfo" << endl;
+        //  cout << tid << "  " << seqs[tid] << endl;
+        //} 
+        
+        return;
+      }
+    }  
+  }
+  //cout << "good here  " << rid << endl;
+  // record the overlap information
+  vector<TargetOverlapType> overlaps;
+  for(int range_id = 0; range_id < range_holder.size(); ++ range_id) {
+    if(covered_range >= n - 1 && range_id >= range_holder.size() - 1) continue;
+    int o_len = len_holder[range_id];
+    // note that the last range correspond to the entire sequence, which has been considered previously
+    //cout << "range: " << range_holder[range_id].first << "  " << range_holder[range_id].second << endl;
+    for(BWTIDX j = range_holder[range_id].first; j < range_holder[range_id].second; ++ j) {
+      TargetOverlapType t; BWTINT foo;
+      bwt.GetRefLocation(j, t.rid, foo); 
+      t.rid += target_id_begin + (foo > 0); // note that the terminal correspond to the start of the next sequence (except for the first sequence)
+      if((*contained)[t.rid]) continue;
+
+      //cout << "target id: " << t.rid << endl;
+      //cout << "foo: " << foo << endl;
+      t.overlap_len = (BWTSHORT) o_len;
+      //t.edge_len = strlen(seqs[rid]) + strlen(seqs[t.rid]) - o_len;
+      if(rid != t.rid)  overlaps.push_back(t);
+    }
+  } 
+  //cout << "good2 here  " << rid << endl;
+  for(int j = 0; j < (*extension)[rid]->size(); ++ j) {
+    BWTINT tid = (*(*extension)[rid])[j].rid;
+    if(!(*contained)[tid]) overlaps.push_back((*(*extension)[rid])[j]);
+  }
+  // find all irriducible edges
+  //cout << "before" << endl;
+  //cout << "source:  " << s << endl;
+  //for(int j = 0; j < overlaps.size(); ++ j) {
+  //  cout << "target:  " << seqs[overlaps[j].rid] << endl;
+  //}
+  RemoveReducibleEdges(seqs, rid, contained, overlaps);
+
+  //cout << "after" << endl;
+  //cout << "source:  " << s << endl;
+  //for(int j = 0; j < overlaps.size(); ++ j) {
+  //  cout << "target:  " << seqs[overlaps[j].rid] << endl;
+  //}
+  // update the extension information
+  (*extension)[rid]->clear();
+  for(int j = 0; j < overlaps.size(); ++ j) {
+    (*extension)[rid]->push_back(overlaps[j]);
+  }
+  /*
+  for(BWTIDX j = fw_range_terminal.first; j < fw_range_terminal.second; ++ j) {
+    TargetOverlapType t; BWTINT foo;
+    bwt.GetRefLocation(j, t.rid, foo); t.rid += target_id_begin;
+    t.overlap_len = i + 1;
+    //t.edge_len = strlen(seqs[rid]) + strlen(seqs[t.rid]) - (i + 1);
+    if(rid != t.rid)  {
+      (*extension)[rid]->push_back(t);
+    }
+    //cout << "target location: " << t.rid << " " << foo << endl;
+    //if(rid != overlap[rid][idx].rid)  ++ idx;
+  }
+  */
+  //overlap_count[rid] = overlap_holder.size();
+  //overlap[rid] = new TargetOverlapType [overlap_holder.size()];
+  //for(i = 0; i < overlap_holder.size(); ++ i) {
+  //  overlap[rid][i] = overlap_holder[i];
+  //}  
+  //cout << "before return: " << rid << endl;
+  return;
+}
+
+
+bool SortFullTargetOverlapType(const FullTargetOverlapType &a, const FullTargetOverlapType &b)  {
+  if(a.edge_len < b.edge_len || (a.edge_len == b.edge_len && a.overlap_len > b.overlap_len) || 
+    (a.edge_len == b.edge_len && a.overlap_len == b.overlap_len && a.rid > b.rid)    
+  )  {
+    return 1;
+  }
+  return 0;
+}
+
+void BWTSearch::RemoveReducibleEdges(
+    char **seqs, const int rid,
+    std::vector<bool> *contained, std::vector<TargetOverlapType> &overlaps
+)  {
+  int i, j, k;  
+  vector<FullTargetOverlapType> full_overlaps; full_overlaps.resize(overlaps.size());
+  for(i = 0; i < overlaps.size(); ++ i) { 
+    full_overlaps[i].rid = overlaps[i].rid;
+    full_overlaps[i].overlap_len = overlaps[i].overlap_len;
+    full_overlaps[i].edge_len = strlen(seqs[rid]) + strlen(seqs[full_overlaps[i].rid]) - full_overlaps[i].overlap_len; 
+  }
+  // sort the overlaps
+  sort(full_overlaps.begin(), full_overlaps.end(), SortFullTargetOverlapType);
+  int max_len = full_overlaps[full_overlaps.size() - 1].edge_len - strlen(seqs[rid]);
+  // detect possible contained reads
+  
+  vector<FullTargetOverlapType> part_init;  
+  for(i = 0; i < full_overlaps.size(); ++ i) {
+    if(full_overlaps[i].edge_len == strlen(seqs[rid]))  {
+      (*contained)[full_overlaps[i].rid] = true;
+      
+      //if(rid == 7641357 || rid == 3356853)  {
+      //  cout << "mark contained by RemoveReducibleEdges" << endl;
+      //}
+
+    } else  {
+      part_init.push_back(full_overlaps[i]);
+    }
+  }
+  queue<vector<FullTargetOverlapType> > part_queue; part_queue.push(part_init);
+  queue<int> len_queue; len_queue.push(0);
+  vector<FullTargetOverlapType> record_overlaps;
+  // search all sequences
+  while(!part_queue.empty()) {
+    vector<FullTargetOverlapType> current = part_queue.front(); part_queue.pop();
+    int current_len = len_queue.front(); len_queue.pop();
+
+    //if(rid == 3356853)  {
+    //  cout << "current len: " << current_len << endl;
+    //  for(k = 0; k < current.size(); ++ k) {
+    //    cout << "seqs:  " << seqs[current[k].rid] << "  " << current[k].overlap_len << endl;
+    // }
+    //}
+    // if current parition is empty, continue
+    if(current.size() <= 0) continue;
+    // if current partiion size is 1, this is an irredicible edge, record and continue
+    if(current.size() == 1) {
+      record_overlaps.push_back(current[0]); continue;
+    }
+    // if the current parition has multiple reads but reaches the boundary of one read
+    // take the first one as irreducible, the rest ones are reducible
+    if(current_len + current[0].overlap_len >= strlen(seqs[current[0].rid]))  {
+      record_overlaps.push_back(current[0]); continue;
+    }
+    // if none of these happens, we need to redistribute the reads into further partitions
+    unordered_map<char, vector<FullTargetOverlapType> > redist;
+    for(j = 0; j < current.size(); ++ j) {
+      char c = seqs[current[j].rid][current[j].overlap_len + current_len];
+      redist[c].push_back(current[j]);
+      //cout << "checking character:  " << c << " " << j << endl;
+    }
+    for(auto it = redist.begin(); it != redist.end(); ++ it) {
+      part_queue.push(it->second);
+      len_queue.push(current_len + 1);
+    }
+  }
+  // record the non-reducible edges
+  overlaps.resize(record_overlaps.size());
+  for(i = 0; i < record_overlaps.size(); ++ i) { 
+    overlaps[i].rid = record_overlaps[i].rid;
+    overlaps[i].overlap_len = record_overlaps[i].overlap_len;
+  }
+  return;
+}
+
 // given a read of interest and minimum overlap, find all intervals (in both fw and re FM-indexes) 
 // corresponding to the prefix of the reads that perfectly overlap with the given read
 void BWTSearch::SearchBeginIntervals(const char* seq, const int min_len, IvInfo &search_info) {

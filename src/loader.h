@@ -33,6 +33,7 @@ class Loader  {
   // header: the two-dimensional array that stores the header information
   // seq: the two-dimensional array that stores the sequence information
   int LoadFasta(BioAlphabet &alphabet, const char *file_name, char **header, char **seq);
+  int LoadFasta(BioAlphabet &alphabet, const char *file_name, char **seq);
  private:
   // checking for special characters in the string
   // alphabet: the alphabet for the string
@@ -45,6 +46,9 @@ class Loader  {
     char **header, char **seq, 
     std::string &single_header, std::string &single_seq, 
     int index
+  );
+  void RecordSequence(
+    char **seq, std::string &single_seq, int index
   );
 };
 

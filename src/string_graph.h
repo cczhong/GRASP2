@@ -13,13 +13,12 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <cstring>
 #include <list>
 #include <stack>
 #include <unordered_map>
 #include <tuple>
 #include <boost/graph/adjacency_list.hpp>
-
-
 
 class STRVertexType {
  public:
@@ -79,25 +78,63 @@ struct SeqAlnInfoType  {
 class StringGraph {
  public:
   explicit StringGraph(void) {initialized_ = false;}
-  ~StringGraph(void) {}
+  ~StringGraph(void) {  }
 
   // import all information in the extension into the string graph
   // notice that the function can be called multiple times 
   // for differnt sets of extension information
-  void ImportExtension(std::vector<ExtType> &extension);
+  void ImportExtension(
+      const int data_size, std::vector<bool> *contained, 
+      std::vector<std::vector<TargetOverlapType> *> *extension
+  );
+
+  void FillRevExtension(
+      std::vector<bool> *contained,
+      std::vector<std::vector<TargetOverlapType> *> *extension, 
+      std::vector<std::vector<TargetOverlapType> *> *rev_extension
+  );
+
+  void WriteUnitigsFromExtension(
+      char **seqs,
+      std::vector<bool> *contained,
+      std::vector<std::vector<TargetOverlapType> *> *extension, 
+      std::vector<std::vector<TargetOverlapType> *> *rev_extension,
+      int *order, std::string &file_name
+  );
+
   // batch execution of ComputeExtension
-  void MultiComputeExtension(
+  void MultiComputeExtension_old(
       const int threads, const int min_overlap, 
       const int offset, const int n, char **seq, 
       BWT &bwt, BWT &rev_bwt, std::vector<ExtType> &extension
   );
+  void MultiComputeExtension(
+      const int threads, const int min_overlap, const int n, char **seq, 
+      const int target_id_begin, BWT &bwt, std::vector<std::vector<TargetOverlapType> *> *extension,
+      std::vector<bool> *contained
+  );
   // computing the extension for a set of reads 
   // NOTE: bwt and rev_bwt are expected to be generated from the entire data set
   // output a set of "extension"s; each of them record the source and targets
-  void ComputeExtension(
+  void ComputeExtension_old(
       const int min_overlap, const int offset, const int n, char **seq, 
       BWT &bwt, BWT &rev_bwt, std::vector<ExtType> &extension
   ); 
+  void ComputeExtension(
+      const int min_overlap, const int offset, const int n, char **seq, 
+      const int target_id_begin, BWT &bwt, 
+      std::vector<std::vector<TargetOverlapType> *> *extension, std::vector<bool> *contained
+  ); 
+
+  //void ComputeEdgeLen(
+  //  const int num_seqs, char **seqs, std::vector<std::vector<TargetOverlapType> *> *extension
+  //);
+  //void DetectContained(
+  //    const int num_seqs, char **seqs, std::vector<std::vector<TargetOverlapType> *> *extension, std::vector<bool> &contained
+  //);
+
+  
+
   // check if there exists some un-labeled vertex or un-labeld path
   // delete those un-labeld vertex or paths and clear the graph
   void CheckGraph(void);
@@ -115,6 +152,7 @@ class StringGraph {
   void TraverseUnbranched(std::list<std::string> &paths, const int min_length = 60);
   // dump the graph to file for future re-loading
   void WriteGraph(BioAlphabet &alphabet, char** seq, const std::string &file_name);
+  void WriteGraph(BioAlphabet &alphabet, char** seq, int *order, const std::string &file_name);
   // loading the index file and construct the graph
   // "orphan_rid" and "orphan_reads" correspond to the sequences that cannot be overlapped
   // to any other reads; direct alignment of these sequences are sufficient
@@ -202,12 +240,16 @@ class StringGraph {
   //void ClusteringSeqs(const int identity);
   *****************************/
   
+  std::string GenSeqFromPathInfo(char **seq, std::vector<int> &path_info);
+
   void PrintGraphSizes()  {
     std::cout << "The graph contains " << num_vertices(*p_graph_) << " vertices." << std::endl;
     std::cout << "The graph contains " << num_edges(*p_graph_) << " edges." << std::endl;
   }
   void Purge()  {
-    if(initialized_) delete p_graph_;
+    if(initialized_) {
+      delete p_graph_;
+    }
   }
   
  private:
@@ -217,10 +259,24 @@ class StringGraph {
   // the hash table recording the rev_BWT index 
   // (which is expected to be corresponding to a full read with delimitor, i.e. $r$)
   // and the corresponding vertex label in the graph "p_graph_"
-  std::unordered_map<BWTIDX, BoostSTRVertex> node_hash_;
+  //std::unordered_map<BWTIDX, BoostSTRVertex> node_hash_;
+  //bool *node_present_;
+  //BoostSTRVertex *node_index_;
   
   // condense the graph (for all reachable components from the source_edge)
   void Condense(char** seq, const BoostSTREdge source_edge);
+  bool TraverseExtensionLeft(
+      char **seqs,
+      std::vector<std::vector<TargetOverlapType> *> *extension, 
+      std::vector<std::vector<TargetOverlapType> *> *rev_extension, 
+      const BWTINT current, BWTINT &next, std::stack<BWTINT> &path, std::string &unitig
+  );
+  bool TraverseExtensionRight(
+      char **seqs,
+      std::vector<std::vector<TargetOverlapType> *> *extension, 
+      std::vector<std::vector<TargetOverlapType> *> *rev_extension, 
+      const BWTINT current, BWTINT &next, std::queue<BWTINT> &path, std::string &unitig
+  );
 };
 
 #endif

@@ -6,6 +6,7 @@ using namespace std;
 void BWT::BuildIndex(const BWTCHAR* text)  {
   bwt_ = new BWTCHAR [size_ + 1];
   BWTIDX fm_size = (size_ / BWT_FM_GAP) + 1;
+  BWTIDX pos_size = (size_ / BWT_POS_GAP) + 1;
   BWTIDX i, j;
   // allocate space for FM-index
   for(int i = 0; i < alphabet_.GetSize(); ++ i)  {
@@ -15,7 +16,7 @@ void BWT::BuildIndex(const BWTCHAR* text)  {
   fm_index_[DELIM] = new BWTIDX [fm_size]; 
   for(j = 0; j < fm_size; ++ j) fm_index_[DELIM][j] = 0;
   // allocate space for position
-  position_ = new BWTIDX [fm_size];
+  position_ = new BWTIDX [pos_size];
   // count frequencies
   for(i = 0; i < size_; ++ i) {
     char c;
@@ -32,7 +33,10 @@ void BWT::BuildIndex(const BWTCHAR* text)  {
         }
         // add the frequency to the FM-index
         fm_index_[it->first][ix] = it->second;
-      }
+      }     
+    }
+    if(i % BWT_POS_GAP == 0)  {
+      BWTIDX ix = i / BWT_POS_GAP;
       // record gapped position information
       position_[ix] = tmp_position_[i];
     }
@@ -52,9 +56,12 @@ void BWT::BuildIndex(const BWTCHAR* text)  {
       // add the frequency to the FM-index
       fm_index_[it->first][ix] = it->second;
     }
+  }  
+  if(i % BWT_POS_GAP == 0)  {
+    BWTIDX ix = i / BWT_POS_GAP;
     // record gapped position information
     position_[ix] = tmp_position_[i];
-  }  
+  }
   // compute accumulated index
   acc_freq_ = new BWTIDX [alphabet_.GetSize() + 2]; // note the trailing character '$'
   // the begin of '$' in the array is 0
@@ -70,6 +77,8 @@ void BWT::BuildIndex(const BWTCHAR* text)  {
     }
   }
   delete [] tmp_position_;
+
+  //cout << bwt_ << endl;
   return;
 }
 
@@ -142,8 +151,13 @@ void BWT::ConstructLocationInfo(const int n, char **header, char **seq) {
     header_[i] = new BWTCHAR [strlen(header[i]) + 1];
     strcpy((char*) header_[i], header[i]);
     // note that we need to add 1 to the sequence length because of the delimitor
-    if(i > 0)  {  acc_len_[i] = acc_len_[i - 1] + strlen(seq[i]) + 1; } 
-    else  { acc_len_[i] = strlen(seq[i]) + 2; }
+    if(i > 0)  {  
+      acc_len_[i] = acc_len_[i - 1] + strlen(seq[i]) + 1; 
+    } else  { 
+      acc_len_[i] = strlen(seq[i]) + 2;
+      cout << seq[i] << endl;
+      cout << "strlen:  " << strlen(seq[i]) << endl; 
+    }
   }
   if(acc_len_[n - 1] != size_)  {
     cout << "BWT::BuildLocationInfo: the sizes of the sequence set and the BWT are different, abort." << endl;
@@ -154,54 +168,13 @@ void BWT::ConstructLocationInfo(const int n, char **header, char **seq) {
   return;
 }
 
-BWTIDX BWT::GetRefLocation(
-    const BWTIDX bwt_pos, std::string &ref_header, BWTIDX &ref_pos
-)  {
-  // check if the reference information has been built
-  assert(ref_success_ && bwt_pos < acc_len_[num_seqs_ - 1]);
-  BWTIDX pos = bwt_pos;
-  BWTIDX traversed = 0;
-  while(pos % BWT_FM_GAP != 0) {
-    //cout << "pos: " << pos << endl;
-    //cout << "char: " << bwt_[pos] << endl;
-    BWTIDX r = CountOccurrence(bwt_[pos], pos);
-    //cout << "occurrence: " << r << endl;
-    int c_id = alphabet_.GetCharMap(bwt_[pos]);
-    //cout << "cid: " << c_id << endl;
-    pos = acc_freq_[c_id + 1] + r;
-    //cout << "char begin:  " << acc_freq_[c_id + 1] << endl;
-    //cout << "new pos: " << pos << endl;
-    ++ traversed;
-  }
-  BWTIDX str_pos = (position_[pos / BWT_FM_GAP] + traversed) % size_;
-  //cout << "pos info:  " << str_pos << " " << position_[pos % BWT_FM_GAP] << " " << traversed << endl;
-  // perform binary search
-  int left = 0, right = num_seqs_ - 1, mid = 0;
-  while(left <= right) {
-    mid = (left + right) / 2;
-    //cout << "left:  " << left << "  right:  " << right << endl; 
-    //cout << "mid: " << mid << " " << str_pos << " " << acc_len_[mid] << endl;
-    if(str_pos >= acc_len_[mid]) {
-      left = mid + 1;
-    } else {
-      if(right > 0 && mid >= 1 && str_pos < acc_len_[mid - 1]) right = mid - 1;
-      else  break;
-    }
-  }
-  //cout << "Identified ID: " << mid << " " << acc_len_[mid - 1] << endl;
-  ref_header = string((char*) header_[mid]);
-  if(mid == 0)  ref_pos = str_pos - 1; // because DILIM was added as the first char of the generalized string
-  else ref_pos = str_pos - acc_len_[mid - 1];  
-  return str_pos;
-}
-
 void BWT::Construct(const BioAlphabet &alphabet, const char *text) {
   alphabet_ = alphabet;
   size_ = string(text).length();
   //cout << text << " " << size_ << endl;
   // build suffix array 
   tmp_position_ = new BWTIDX [size_ + 1]; 
-  int divsufsort_tag = divsufsort64((BWTCHAR*) text, tmp_position_, size_);
+  int divsufsort_tag = divsufsort((BWTCHAR*) text, tmp_position_, size_);
   //for(int i = 0; i < size_; ++ i) {
   //  cout << tmp_position_[i] << endl;
   //}
@@ -218,7 +191,7 @@ void BWT::ConstructNoPos(const BioAlphabet &alphabet, const char *text) {
   size_ = string(text).length();
   // build suffix array 
   bwt_ = new BWTCHAR [size_ + 1];
-  int divsufsort_tag = divbwt64((BWTCHAR*) text, bwt_, NULL, size_);
+  int divsufsort_tag = divbwt((BWTCHAR*) text, bwt_, NULL, size_);
   bwt_[size_] = '\0';
   // TODO: Handle sorting errors
   assert(divsufsort_tag >= 0);
@@ -299,7 +272,22 @@ void BWT::ConstructFromIndex(
       acc_freq_[i + 2] = acc_freq_[i + 1];
     }
   }
-  
+  // setting number of reads and computing accumulating length for BWT search
+  num_seqs_ = 0;  
+  for(BWTIDX i = 0; i < size_; ++ i)  {
+    if(text[i] == DELIM) num_seqs_ ++;
+  }
+  -- num_seqs_; // to accounted for the starting terminator
+  acc_len_ = new BWTIDX [num_seqs_];
+  int idx = 0;
+  for(BWTIDX i = 0; i < size_; ++ i)  {
+    if(text[i] == DELIM && i > 0) acc_len_[idx ++] = i + 1;
+  }
+  header_ = new BWTCHAR* [num_seqs_];
+  for(int i = 0; i < num_seqs_; ++ i) {
+    header_[i] = new BWTCHAR [1];
+  }
+  ref_success_ = true;
   build_success_ = true;
   return;
 }
@@ -351,7 +339,7 @@ void BWT::WritePosition(const std::string &file_name) {
     cout << "BWT::WritePosition: Error in writing BWT position file " << file_name << "; Abort." << endl;
   }
   // writing reduced_map
-  BWTIDX gap_size = (size_ / BWT_FM_GAP) + 1;
+  BWTIDX gap_size = (size_ / BWT_POS_GAP) + 1;
   out_fh << gap_size << endl;
   for(BWTIDX i = 0; i < gap_size; ++ i) {
     out_fh << position_[i] << ":";
@@ -371,7 +359,7 @@ void BWT::LoadPosition(const std::string &file_name)  {
   // this is to load the size of the position array
   getline(in_fh, line);
   BWTIDX gap_size = (BWTIDX) stol(line);
-  if(gap_size != (BWTIDX) (size_ / BWT_FM_GAP) + 1)  {
+  if(gap_size != (BWTIDX) (size_ / BWT_POS_GAP) + 1)  {
     cout << "BWT::LoadPosition: size of position index does not match the text, abort." << endl; exit(1);
   }
   // loading the files line by line
@@ -381,7 +369,7 @@ void BWT::LoadPosition(const std::string &file_name)  {
   for(i = 0; i < line.length(); ++ i) {
     if(line[i] == ':') range.push_back(i);
   }
-  if(gap_size != (BWTIDX) (size_ / BWT_FM_GAP) + 1 || gap_size != range.size() - 1)  {
+  if(gap_size != (BWTIDX) (size_ / BWT_POS_GAP) + 1 || gap_size != range.size() - 1)  {
     cout << "BWT::LoadFMIndex: size of position index does not match the text, abort." << endl; exit(1);
   }
   position_ = new BWTIDX [gap_size];
@@ -509,4 +497,50 @@ BWTIDX BWT::CountLexicoLess(const char c, const BWTIDX pos) {
   //cout << "CountLexicoLess final: " << occ << endl;
   //cout << "End of function CountLexicoLess" << endl;
   return occ;
+}
+
+BWTIDX BWT::GetRefLocation(
+    const BWTIDX bwt_pos, BWTINT &ref_id, BWTIDX &ref_pos
+)  {
+  // check if the reference information has been built
+  //cout << num_seqs_ << endl;
+  //cout << ref_success_ << endl;
+  //cout << bwt_pos << endl;
+  //cout << acc_len_[num_seqs_ - 1] << endl;
+  //cout << ref_success_  << "  " << bwt_pos << " " << acc_len_[num_seqs_ - 1] << " " << num_seqs_ << endl;
+  assert(ref_success_ && bwt_pos < acc_len_[num_seqs_ - 1]);
+  BWTIDX pos = bwt_pos;
+  BWTIDX traversed = 0;
+  while(pos % BWT_POS_GAP != 0) {
+    //cout << "pos: " << pos << endl;
+    //cout << "char: " << bwt_[pos] << endl;
+    BWTIDX r = CountOccurrence(bwt_[pos], pos);
+    //cout << "occurrence: " << r << endl;
+    int c_id = alphabet_.GetCharMap(bwt_[pos]);
+    //cout << "cid: " << c_id << endl;
+    pos = acc_freq_[c_id + 1] + r;
+    //cout << "char begin:  " << acc_freq_[c_id + 1] << endl;
+    //cout << "new pos: " << pos << endl;
+    ++ traversed;
+  }
+  BWTIDX str_pos = (position_[pos / BWT_POS_GAP] + traversed) % size_;
+  //cout << "pos info:  " << str_pos << " " << position_[pos % BWT_POS_GAP] << " " << traversed << endl;
+  // perform binary search
+  int left = 0, right = num_seqs_ - 1, mid = 0;
+  while(left <= right) {
+    mid = (left + right) / 2;
+    //cout << "left:  " << left << "  right:  " << right << endl; 
+    //cout << "mid: " << mid << " " << str_pos << " " << acc_len_[mid] << endl;
+    if(str_pos >= acc_len_[mid]) {
+      left = mid + 1;
+    } else {
+      if(right > 0 && mid >= 1 && str_pos < acc_len_[mid - 1]) right = mid - 1;
+      else  break;
+    }
+  }
+  //cout << "Identified ID: " << mid << " " << acc_len_[mid - 1] << endl;
+  ref_id = mid;
+  if(mid == 0)  ref_pos = str_pos - 1; // because DILIM was added as the first char of the generalized string
+  else ref_pos = str_pos - acc_len_[mid - 1];  
+  return str_pos;
 }

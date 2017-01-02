@@ -13,20 +13,22 @@
 #include <tuple>
 #include <unordered_map>
 
-#include "divsufsort64.h"
+#include "divsufsort.h"
 #include "bio_alphabet.h"
 #include "concatenator.h"
 
 // the gap between two recorded occurrences in the FM-index
 #define BWT_FM_GAP 64
+#define BWT_POS_GAP 32
 
 /* Definition from 64-bit libdivsufsort */
 // typedef uint8_t sauchar_t;
 typedef sauchar_t BWTCHAR;
-// typedef int64_t saidx_t;
-typedef saidx64_t BWTIDX;
+// typedef int32_t saidx_t;
+typedef saidx_t BWTIDX;
 // typedef int32_t saint_t
 typedef saint_t BWTINT;
+typedef int16_t BWTSHORT;
 
 class BWT {
  public:
@@ -75,7 +77,7 @@ class BWT {
   // retrieve the reference position given a corresponding BWT position
   // returns the absolute location
   BWTIDX GetRefLocation(
-      const BWTIDX bwt_pos, std::string &ref_header, BWTIDX &ref_pos
+      const BWTIDX bwt_pos, BWTINT &ref_id, BWTIDX &ref_pos
   );
 
   
@@ -111,6 +113,7 @@ class BWT {
   
   void WriteIndex(const std::string &file_prefix);
   void WriteIndexNoPos(const std::string &file_prefix);
+
   
   friend class BWTSearch;
 

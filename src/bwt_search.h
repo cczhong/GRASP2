@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <list>
 #include <queue>
+#include <vector>
 #include <stack>
 #include <cstring>
 #include <cstdlib>
@@ -27,6 +28,18 @@ struct ExtInfo  {
 #ifdef DEBUG
   std::list<BWTIDX> history;
 #endif
+};
+
+struct TargetOverlapType  {
+  BWTINT rid;
+  BWTSHORT overlap_len;
+  bool visited;
+};
+
+struct FullTargetOverlapType  {
+  BWTINT rid;
+  BWTINT edge_len;
+  BWTSHORT overlap_len;
 };
 
 struct FwReSearchType {
@@ -145,6 +158,18 @@ class BWTSearch {
   // if yes return true or otherwise return false 
   // also output the position in the BWT using argument "pos"
   bool IsContainedRead(const char* seq, BWT &bwt, AlignType &pos);
+
+  // compute all reads that overlap with the current sequence
+  void ComputeOverlapInfo(
+      char **seqs, const int rid, const int target_id_begin, BWT &bwt, const int min_len, 
+      std::vector<std::vector<TargetOverlapType> *> *extension, std::vector<bool> *contained
+  );
+
+  void RemoveReducibleEdges(
+    char **seqs, const int rid, 
+    std::vector<bool> *contained, std::vector<TargetOverlapType> &overlaps
+  );
+
  protected:
   // the function calucates the lower bound and stores in the array "bound"
   // returns the length of the longest stretch of pefectly matched substring

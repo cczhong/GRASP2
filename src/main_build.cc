@@ -18,6 +18,7 @@
 #include <iostream>
 #include <string>
 #include <list>
+#include <vector>
 #include <ctime>
 #include <cmath>
 
@@ -135,43 +136,153 @@ int main(int argc, char** argv)  {
   double check_time;
   Loader pepdb_loader;
   int num_seqs = pepdb_loader.CountFastaNumSeqs(db_file.c_str());
-  char **header = new char* [num_seqs];
   char **seqs = new char* [num_seqs];
-  num_seqs = pepdb_loader.LoadFasta(protein_alphabet, db_file.c_str(), header, seqs);
+  //num_seqs = pepdb_loader.LoadFasta(protein_alphabet, db_file.c_str(), header, seqs);
+  pepdb_loader.LoadFasta(protein_alphabet, db_file.c_str(), seqs);
   string concat_seq; 
-  Concatenator concat_obj(seqs, num_seqs, concat_seq);
-  //***************************
+  //Concatenator concat_obj(seqs, num_seqs, concat_seq);
+  
+  //cout << "check seq: " << seqs[823927] << endl;
+  //cout << "check seq: " << seqs[7792734] << endl;
+  //return 0;
+
+  // sort the reads based on minimizers
+  KmerUnitcoder min_sort_mer(protein_alphabet, 6);
+  MinimizerSort m_sort;
+  int *order = new int [num_seqs];
+  m_sort.SortSeqs(min_sort_mer, 10000000, num_seqs, seqs, order);
+  
+  //for(int i = 0; i < num_seqs; ++ i) {
+  //  cout << seqs[i] << endl;
+  //}
+  //return 0;
+
+  vector<string> concat_seqs;
+  vector<int> id_begin;
+  Concatenator concat_obj(seqs, num_seqs, 100000000, concat_seqs, id_begin);
   if(is_verbose)  {
     check_time = MyTime();
     cout << "GRASP2-Build: Load peptide database done.";
     PrintElapsed(start_time, check_time, "");
   }
-  
-  //***************************
-  
-  // Construct Burrows-Wheeler Transformation
   start_time = MyTime();
-  BWT bwt;
-  bwt.ConstructNoPos(protein_alphabet, concat_seq.c_str());  
-  concat_seq = string(concat_seq.rbegin(), concat_seq.rend());
-  BWT rev_bwt;
-  rev_bwt.ConstructNoPos(protein_alphabet, concat_seq.c_str());
-  //***************************
+  //for(auto it = concat_seqs.begin(); it != concat_seqs.end(); ++ it) {
+  //  cout << *it << endl << endl;
+  //}
+
+  // construct multiple BWT for each block of sequences
+  int seq_idx = 0;
+  for(auto it = concat_seqs.begin(); it != concat_seqs.end(); ++ it) {
+    string bwt_prefix = workspace_dir + "/" + "bwt." + to_string(seq_idx);
+    string rev_bwt_prefix = workspace_dir + "/" + "rev_bwt." + to_string(seq_idx);
+    // construct forward sequence BWT and write it on hard disk
+    BWT bwt;
+    bwt.Construct(protein_alphabet, it->c_str());
+    bwt.WriteIndex(bwt_prefix);
+    bwt.Purge();
+    // construct reverse sequence BWT and write it on hard disk
+    //string rev_seq = string(it->rbegin(), it->rend());
+    //BWT rev_bwt;
+    //rev_bwt.Construct(protein_alphabet, rev_seq.c_str());
+    //rev_bwt.WriteIndex(rev_bwt_prefix);
+    //rev_bwt.Purge();
+    ++ seq_idx;
+  }
   if(is_verbose)  {
     check_time = MyTime();
     cout << "GRASP2-Build: Construct Burrows-Wheeler transformation done.";
     PrintElapsed(start_time, check_time, "");
   }
-  //***************************
-  // Compute pariwse overlap
   start_time = MyTime();
+
+  // load BWT one-by-one and conduct the search
+  seq_idx = 0;
   StringGraph strG;
-  std::vector<ExtType> extension;
-  strG.MultiComputeExtension(
-      num_threads, extd_len, 0, num_seqs, seqs, 
-      bwt, rev_bwt, extension
-  );
-  strG.ImportExtension(extension);
+  BWTSearch bwt_searcher;
+  //std::vector<std::vector<TargetOverlapType> > extension;
+  vector<vector<TargetOverlapType> *> *extension = new vector<vector<TargetOverlapType> *>;
+  extension->resize(num_seqs);
+  for(BWTINT i = 0; i < num_seqs; ++ i) {
+    (*extension)[i] = new vector<TargetOverlapType>;
+  }
+  vector<bool> *contained = new vector<bool> (num_seqs, false);
+  //TargetOverlapType **extension = new TargetOverlapType* [num_seqs];
+  //int *ext_count = new int [num_seqs];
+  //cout << "num_threads: " << num_threads << endl;
+  for(auto it = concat_seqs.begin(); it != concat_seqs.end(); ++ it) {
+    string bwt_prefix = workspace_dir + "/" + "bwt." + to_string(seq_idx);
+    //string rev_bwt_prefix = workspace_dir + "/" + "rev_bwt." + to_string(seq_idx);
+    // load forward and backward BWTs from index
+    BWT reload_bwt;
+    reload_bwt.ConstructFromIndex(protein_alphabet, it->c_str(), bwt_prefix);
+    //string rev_seq = string(it->rbegin(), it->rend());
+    //BWT reload_rev_bwt;
+    //reload_rev_bwt.ConstructFromIndex(protein_alphabet,rev_seq.c_str(), rev_bwt_prefix);
+    //cout << "Finish loading index" << endl;
+    strG.MultiComputeExtension(
+        num_threads, extd_len, num_seqs, seqs, 
+        id_begin[seq_idx], reload_bwt, extension, contained
+    );
+    //cout << "Done computing multiple extension" << endl;
+    reload_bwt.Purge();
+    it->clear();
+    ++ seq_idx;
+  }
+  if(is_verbose)  {
+    check_time = MyTime();
+    cout << "GRASP2-Build: Compute read overlap done.";
+    PrintElapsed(start_time, check_time, "");
+  }
+  start_time = MyTime();
+
+  // TODO: handle the read ID that are shuffled by minimizer sorting
+
+  /*
+  for(int i = 0; i < num_seqs; ++ i) {
+    if(i != 6918562) continue;
+    cout << "i: " << i << " " << seqs[i] << endl;    
+    if((*contained)[i]) continue;
+    cout << "source:  " << seqs[i] << endl;
+    for(int j = 0; j < (*extension)[i]->size(); ++ j) {
+      int tid = (*(*extension)[i])[j].rid;
+      if((*contained)[tid])  continue;
+      cout << "target:  " << seqs[tid] << endl;
+    }
+    cout << "=======================" << endl;
+  }
+  */
+  vector<vector<TargetOverlapType> *> *rev_extension = new vector<vector<TargetOverlapType> *>;
+  rev_extension->resize(num_seqs);
+  for(BWTINT i = 0; i < num_seqs; ++ i) {
+    (*rev_extension)[i] = new vector<TargetOverlapType>;
+  }
+  strG.FillRevExtension(contained, extension, rev_extension);
+
+  string db_stem = GetFileStem(db_file);
+  string idx_unitig_file = workspace_dir + "/" + db_stem + ".utg";  
+
+  strG.WriteUnitigsFromExtension(seqs, contained, extension, rev_extension, order, idx_unitig_file);
+  if(is_verbose)  {
+    check_time = MyTime();
+    cout << "GRASP2-Build: Write unitigs done";
+    PrintElapsed(start_time, check_time, "");
+  }
+
+  // TODO: memory collection for extension and rev_extension
+  
+  return 0;
+  // Compute the length of the sequence represent by the edge connecting the two sequences
+  //strG.ComputeEdgeLen(num_seqs, seqs, extension);
+  // remove contained reads
+  //vector<bool> contained(num_seqs, false);
+  //strG.DetectContained(num_seqs, seqs, extension, contained);
+  //strG.RemoveReducibleEdges(num_seqs, contained, extension);
+  strG.ImportExtension(num_seqs, contained, extension);
+  extension->clear(); delete extension;
+  rev_extension->clear(); delete rev_extension;
+  contained->clear(); delete contained;
+
+  //return 0;
   //***************************
   if(is_verbose)  {
     check_time = MyTime();
@@ -181,7 +292,11 @@ int main(int argc, char** argv)  {
   //***************************
   // Post-processing of the string graph
   start_time = MyTime();
+
+  
   strG.CheckGraph(); 
+
+  /*
   while(strG.RemoveTipsBeforeCondense())  {;}
   for(int i = 3; i < 10; i += 3) {
     int num_removed_right = strG.RemoveBubbleRight(i);
@@ -190,7 +305,11 @@ int main(int argc, char** argv)  {
     while(strG.RemoveTipsBeforeCondense())  {;}
     //cout << "Num edges removed: " << num_removed_right << " " << num_removed_left << endl;
   }
+  */
+
   strG.CondenseGraph(seqs);
+
+
   //***************************
   if(is_verbose)  {
     check_time = MyTime();
@@ -200,48 +319,22 @@ int main(int argc, char** argv)  {
   //***************************
   // Write the string graph to hard dist
   start_time = MyTime();
-  string db_stem = GetFileStem(db_file);
-  string idx_unitig_file = workspace_dir + "/" + db_stem + ".utg";  
-  strG.WriteGraph(protein_alphabet, seqs, idx_unitig_file);
+  //string db_stem = GetFileStem(db_file);
+  //string idx_unitig_file = workspace_dir + "/" + db_stem + ".utg";  
+  strG.WriteGraph(protein_alphabet, seqs, order, idx_unitig_file);
+  //strG.WriteGraph(protein_alphabet, seqs, idx_unitig_file);
   strG.Purge();
   // Collect memory
   for(int idm = 0; idm < num_seqs; ++ idm) {
-    delete [] header[idm]; delete [] seqs[idm]; 
+    delete [] seqs[idm]; 
   }
-  delete [] header; delete [] seqs;
+  delete [] seqs;
   //***************************
   if(is_verbose)  {
     check_time = MyTime();
     cout << "GRASP2-Build: Write string graph unitigs done.";
     PrintElapsed(start_time, check_time, "");
   }
-
-  //***************************
-  // Constructing k-mer mapping information
-  //start_time = MyTime();
-  //StringGraph strLoad;
-  //vector<int> orphan_id;
-  //vector<string> orphan_seq;
-  //strLoad.LoadGraph(idx_unitig_file, orphan_id, orphan_seq);
-  //vector<string> unitigs;
-  //strLoad.RecordEdgeSeqs(unitigs);
-  //strLoad.Purge();
-  //SequenceSearch seq_search; 
-  //string idx_kmer_file = workspace_dir + "/" + db_stem + ".kmp"; 
-  // include the single sequences into the indexing step
-  //for(int i = 0; i < orphan_seq.size(); ++ i) {
-  //  unitigs.push_back(orphan_seq[i]);
-  //}
-  //seq_search.IndexKmerPosition(protein_alphabet, mer_len, unitigs, idx_kmer_file);
-  //***************************
-  //if(is_verbose)  {
-  //  check_time = MyTime();
-  //  cout << "GRASP2-Build: Constructing and writing k-mer positions done. ";
-  //  PrintElapsed(start_time, check_time, "");
-    //cout << "GRASP2-Build: End of program execution." << endl;
-    //cout << "============================================================" << endl;
-  //}
-  //***************************
   
   start_time = MyTime();
   SequenceSearch seq_search; 
@@ -251,30 +344,6 @@ int main(int argc, char** argv)  {
       mer_len, protein_alphabet, scoring_function, 
       neighbor_score, idx_neighbor_file
   );
-
-  // Constructing k-mer mapping information
-
-  /*
-  StringGraph strLoad;
-  vector<int> orphan_id;
-  vector<string> orphan_seq;
-  strLoad.LoadGraph(idx_unitig_file, orphan_id, orphan_seq);
-  vector<string> unitigs;
-  strLoad.RecordEdgeSeqs(unitigs);
-  strLoad.Purge();
-  
-  string idx_kmer_file = workspace_dir + "/" + db_stem + ".kmp"; 
-  concat_seq = string(concat_seq.rbegin(), concat_seq.rend());
-  seq_search.IndexKmerPosition(protein_alphabet, mer_len, concat_seq, idx_kmer_file);
-  */
-  
-  /*
-  string idx_position_file = workspace_dir + "/" + db_stem + ".kmp";  
-  seq_search.IndexKmerPosition(
-    reduced_alphabet, mer_len,
-    unitigs, idx_position_file
-  );
-  */
   
   if(is_verbose)  {
     check_time = MyTime();

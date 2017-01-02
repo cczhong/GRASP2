@@ -173,6 +173,23 @@ int main(int argc, char** argv)  {
   char **query_tags = new char *[num_queries];
   char **query_seqs = new char *[num_queries];
   query_loader.LoadFasta(*protein_alphabet, query.c_str(), query_tags, query_seqs);
+  vector<string> q_tags_str, q_seqs_str;
+  q_tags_str.resize(num_queries); q_seqs_str.resize(num_queries);
+  for(int i = 0; i < num_queries; ++ i) {
+    q_tags_str[i] = query_tags[i]; q_seqs_str[i] = query_seqs[i]; 
+    delete [] query_tags[i]; delete [] query_seqs[i];
+  }
+  delete [] query_tags; delete [] query_seqs;
+  // Sort the query sequences based on length
+  //for(int i = 0; i < num_queries - 1; ++ i) {
+  //  for(int j = i + 1; j < num_queries; ++ j) {
+  //    if(q_seqs_str[i].length() < q_seqs_str[j].length()) {
+  //      string tmp = q_seqs_str[i]; q_seqs_str[i] = q_seqs_str[j]; q_seqs_str[j] = tmp;
+  //      tmp = q_tags_str[i]; q_tags_str[i] = q_tags_str[j]; q_tags_str[j] = tmp;
+  //    }
+  //  }
+  //}
+  
   // Constructing the String Graph
   string db_stem = GetFileStem(db_file);
   StringGraph strG;
@@ -249,7 +266,7 @@ int main(int argc, char** argv)  {
       {
         start_time_p = MyTime();
       }
-      string current_query = query_seqs[q_id];
+      string current_query = q_seqs_str[q_id];
       // Pre-processing and identify candidate unitigs for alignment filtering
       int screen_cutoff = scoring_function->ComputeCutoff(
           current_query.length(), db_size, e_value * 1000
@@ -288,7 +305,7 @@ int main(int argc, char** argv)  {
         
         if(is_verbose)  {
           check_time_p = MyTime();
-          cout << "GRASP2-Assemble::" << query_tags[q_id] << ": Unitig filtering done.";
+          cout << "GRASP2-Assemble::" << q_tags_str[q_id] << ": Unitig filtering done.";
           PrintElapsed(start_time_p, check_time_p, "");
           start_time_p = MyTime();
         }
@@ -321,7 +338,7 @@ int main(int argc, char** argv)  {
       {  
         if(is_verbose)  {
           check_time_p = MyTime();
-          cout << "GRASP2-Assemble::" << query_tags[q_id] << ": Path reconstruction done.";
+          cout << "GRASP2-Assemble::" << q_tags_str[q_id] << ": Path reconstruction done.";
           PrintElapsed(start_time_p, check_time_p, "");
           start_time_p = MyTime();
         }
@@ -365,7 +382,7 @@ int main(int argc, char** argv)  {
       {
         if(is_verbose)  {
           check_time_p = MyTime();
-          cout << "GRASP2-Assemble::" << query_tags[q_id] << ": Re-alignment done.";
+          cout << "GRASP2-Assemble::" << q_tags_str[q_id] << ": Re-alignment done.";
           PrintElapsed(start_time_p, check_time_p, "");
           start_time_p = MyTime();
         }
@@ -382,7 +399,7 @@ int main(int argc, char** argv)  {
       {
         if(is_verbose)  {
           check_time_p = MyTime();
-          cout << "GRASP2-Assemble::" << query_tags[q_id] << ": Contig recalibration done.";
+          cout << "GRASP2-Assemble::" << q_tags_str[q_id] << ": Contig recalibration done.";
           PrintElapsed(start_time_p, check_time_p, "");
           start_time_p = MyTime();
         }
@@ -397,7 +414,7 @@ int main(int argc, char** argv)  {
         for(auto it = refined_contigs.begin(); it != refined_contigs.end(); ++ it) {
           stringstream outs;
           ++ idx;
-          outs << query_tags[q_id] << "||contig_" << idx;
+          outs << q_tags_str[q_id] << "||contig_" << idx;
           string barcode = outs.str();
           int begin = it->q_begin;
           int end = it->q_end;
@@ -429,7 +446,7 @@ int main(int argc, char** argv)  {
       {
         if(is_verbose)  {
           check_time_p = MyTime();
-          cout << "GRASP2-Assemble::" << query_tags[q_id] << ": Writing assembled contigs done.";
+          cout << "GRASP2-Assemble::" << q_tags_str[q_id] << ": Writing assembled contigs done.";
           PrintElapsed(start_time_p, check_time_p, "");
         }
       }
@@ -448,10 +465,5 @@ int main(int argc, char** argv)  {
     cout << "GRASP2-Assemble: End of program execution." << endl;
     cout << "============================================================" << endl;
   }
-  // Collect memory
-  for(int idm = 0; idm < num_queries; ++ idm) {
-    delete [] query_tags[idm]; delete [] query_seqs[idm]; 
-  }
-  delete [] query_tags; delete [] query_seqs;
   return 0;
 }
