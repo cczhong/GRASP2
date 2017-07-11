@@ -270,7 +270,7 @@ int main(int argc, char** argv)  {
 
   // TODO: memory collection for extension and rev_extension
   
-  return 0;
+  //return 0;
   // Compute the length of the sequence represent by the edge connecting the two sequences
   //strG.ComputeEdgeLen(num_seqs, seqs, extension);
   // remove contained reads
